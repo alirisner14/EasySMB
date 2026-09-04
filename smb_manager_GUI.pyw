@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox, ttk
 
 
@@ -191,8 +192,16 @@ class GlassSMBManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Glass SMB & Private Storage Core (Administrator)")
-        self.root.geometry("1140x860")
+        self.root.geometry("1140x880")
         self.root.minsize(1060, 800)
+
+        # Look for Favicon
+        icon_path = "app_icon.ico"
+        if os.path.exists(icon_path):
+            try:
+                self.root.iconbitmap(icon_path)
+            except:
+                pass
 
         self.current_process = None
         self.is_processing = False
@@ -226,6 +235,15 @@ class GlassSMBManagerApp:
 
         self.main_container = tk.Frame(self.root, bg=self.palette["bg_tint"])
         self.main_container.place(relx=0.5, rely=0.5, relwidth=0.96, relheight=0.96, anchor="center")
+
+        # Top Logo Header
+        self.header_frame = tk.Frame(self.main_container, bg=self.palette["bg_tint"])
+        self.header_frame.pack(fill="x", padx=12, pady=(10, 0))
+        lbl_logo = tk.Label(
+            self.header_frame, text="⛁ Glass SMB Core", 
+            bg=self.palette["bg_tint"], fg=self.palette["text_bright"], font=("Segoe UI", 16, "bold")
+        )
+        lbl_logo.pack(side="left")
 
         self.notebook = ttk.Notebook(self.main_container)
         self.notebook.pack(fill="both", expand=True, padx=12, pady=(10, 4))
@@ -512,7 +530,7 @@ class GlassSMBManagerApp:
             width=260, height=34, radius=16, color_scheme="accent",
         ).pack(side="left", padx=(0, 10))
 
-        matrix_rim, matrix_card = self.create_glass_card(self.view_step2, title="Step 4: User & Folder Permissions Matrix")
+        matrix_rim, matrix_card = self.create_glass_card(self.view_step2, title="Step 4: User Access Matrix & Access-Based Enumeration")
         matrix_rim.pack(fill="both", expand=True, pady=4)
 
         matrix_split = tk.Frame(matrix_card, bg=self.palette["glass_card"])
@@ -538,7 +556,7 @@ class GlassSMBManagerApp:
         right_perm_box.pack(side="right", fill="both", expand=True)
 
         self.lbl_perm_header = tk.Label(
-            right_perm_box, text="Folder Access for Selected User:", bg=self.palette["glass_card"],
+            right_perm_box, text="Subfolder Access for Selected User:", bg=self.palette["glass_card"],
             fg=self.palette["text_glow"], font=("Segoe UI", 9, "bold"),
         )
         self.lbl_perm_header.pack(anchor="w")
@@ -583,7 +601,7 @@ class GlassSMBManagerApp:
         apply_bar.pack(fill="x", pady=(6, 2))
 
         FrostedGlassButton(
-            apply_bar, text="⚡ Apply All Permissions & Publish Shares", command=self.apply_all_configured_permissions,
+            apply_bar, text="⚡ Apply Invisible ABE Locks & Publish Master Share", command=self.apply_all_configured_permissions,
             width=360, height=38, radius=18, color_scheme="accent",
         ).pack(side="left", padx=(0, 10))
 
@@ -666,7 +684,9 @@ class GlassSMBManagerApp:
 
         tk.Label(
             card,
-            text="Tailscale provisions an encrypted tunnel directly between devices.\nRequires zero router port-forwarding and assigns a permanent IP.",
+            text="Tailscale is a zero-configuration VPN. It creates an encrypted, peer-to-peer mesh network\n"
+                 "that allows your devices to access this SMB server remotely from anywhere in the world.\n"
+                 "It requires zero router configuration and completely bypasses CGNAT and port-forwarding.",
             bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9), justify="left",
         ).pack(anchor="w", pady=(0, 10))
 
@@ -678,15 +698,16 @@ class GlassSMBManagerApp:
             width=200, height=36, radius=18, color_scheme="neutral",
         ).pack(side="left", padx=(0, 12))
 
-        def auth_tailscale():
+        def open_tailscale_console():
             ts_path = r"C:\Program Files\Tailscale\tailscale.exe"
             if os.path.exists(ts_path):
-                self.run_cmd_thread([ts_path, "up"], "Tailscale web login active.")
+                self.run_cmd_thread([ts_path, "up"], "Tailscale engine connected.")
+                webbrowser.open("https://login.tailscale.com/admin/machines")
             else:
                 self.set_status("Tailscale not found. Please install it first.", "error")
 
         FrostedGlassButton(
-            btn_row, text="Authenticate Node (Login)", command=auth_tailscale,
+            btn_row, text="Open Tailscale Console", command=open_tailscale_console,
             width=240, height=36, radius=18, color_scheme="accent",
         ).pack(side="left")
 
@@ -706,24 +727,39 @@ class GlassSMBManagerApp:
 
         guide_content = """TAILSCALE COMPREHENSIVE SETUP GUIDE
 
-PHASE 1: SERVER CONFIGURATION (DASHBOARD)
-1. Authenticate Node: Click the 'Authenticate Node' button above to log this server into Tailscale.
-2. Disable Key Expiry: 
-   • Go to login.tailscale.com -> Machines in your browser.
-   • Click the (...) menu next to this NAS PC and select "Disable Key Expiry".
-     (This ensures your server doesn't randomly disconnect after 180 days).
-3. Enable MagicDNS:
-   • Go to the DNS tab in the Tailscale dashboard.
-   • Toggle MagicDNS ON. This lets devices connect using the computer's name (e.g., FamilyNAS) instead of an IP address.
+PHASE 1: INSTALLATION & FIRST BOOT
+1. Click 'Install Tailscale Engine' above. Wait for the 'Success' notification at the bottom of the window.
+2. Go to tailscale.com in your web browser and create a free account.
+3. Come back here and click 'Open Tailscale Console'. This will link your computer and open the Tailscale dashboard so you can configure it.
 
-PHASE 2: CONNECTING CLIENT DEVICES
+PHASE 2: UNATTENDED MODE & TAGS (DEDICATED SERVER SETUP)
+Normally, Tailscale only runs when a user is logged into the PC. For a dedicated NAS/server, you want it to run as a background service so it connects instantly on boot, even before you log in.
+1. Look at your Windows System Tray (bottom right corner of your screen, near the clock - you may need to click the ^ arrow to show hidden icons). 
+2. Right-click the Tailscale icon -> Preferences -> check "Run Unattended".
+3. Tailscale will warn you about "Tags". Because this machine is now a server, you should "Tag" it so its authentication doesn't expire.
+   • Open the Tailscale Admin Console (login.tailscale.com) -> go to the 'Access Controls' tab.
+   • Click 'Definitions' -> then the 'Tags' tab at the top.
+   • Click '+ Create Tag'.
+   • Tag Name: type 'server' (it will become tag:server).
+   • Tag Owner: type your Tailscale account email, then click 'Save'.
+   • Now go to the 'Machines' tab on the left menu.
+   • Click the (...) menu next to this NAS PC -> Edit ACL tags -> check 'tag:server'.
+
+PHASE 3: DASHBOARD CONFIGURATION (MagicDNS & Expiry)
+1. In the Tailscale Admin Console (login.tailscale.com), go to the Machines tab.
+2. Click the (...) menu next to this NAS PC and select "Disable Key Expiry". (This ensures your server doesn't randomly disconnect after 180 days).
+3. Go to the DNS tab on the left menu.
+4. Toggle MagicDNS ON. This lets devices connect using the computer's name (e.g., FamilyNAS) instead of a random IP address.
+
+PHASE 4: CONNECTING FAMILY DEVICES
 Each device must have the Tailscale app installed and logged in to the SAME account you used for the server.
 
 ▶ Windows PCs & Laptops
    1. Install Tailscale and log in.
    2. Open File Explorer. In the top address bar, type: \\\\FamilyNAS (or your PC's name) and press Enter.
-   3. Enter the local Windows Username and Password you created for them in Step 1.
-   4. Right-click the folder and select "Pin to Quick Access".
+   3. Open the single Master Share folder you see on screen.
+   4. Enter the local Windows Username and Password you created for them in Step 1.
+   5. Thanks to Access-Based Enumeration, they will magically ONLY see folders they have permission for!
 
 ▶ Apple iPhone & iPad (Native Support)
    1. Install Tailscale from the App Store, log in, and ensure the VPN is Active.
@@ -731,6 +767,7 @@ Each device must have the Tailscale app installed and logged in to the SAME acco
    3. Tap 'Browse' at the bottom, then the (...) menu in the top right.
    4. Select 'Connect to Server'.
    5. Enter: smb://FamilyNAS
+      (Note: If Apple struggles to resolve the short name over cellular and says 'Socket Not Connected', go back to the Tailscale Machines page, copy the long Machine Name, and use the FQDN instead: e.g., smb://familynas.yak-bebop.ts.net)
    6. Select 'Registered User' and enter their Windows credentials.
 
 ▶ Android Phones & Tablets (Cx File Explorer)
@@ -742,7 +779,7 @@ Each device must have the Tailscale app installed and logged in to the SAME acco
    5. Port: (Leave blank)
    6. Username & Password: Enter their specific credentials.
    7. Check "Display password" to verify, then tap OK.
-   8. A permanent shortcut will now exist on the Network tab to easily access their files."""
+   8. Tap the newly created shortcut. It will open the master share, hiding any folders they don't have access to."""
         
         txt.insert("1.0", guide_content)
         txt.config(state="disabled")
@@ -756,7 +793,9 @@ Each device must have the Tailscale app installed and logged in to the SAME acco
 
         tk.Label(
             card,
-            text="SnapRAID generates array parity across storage drives without disk striping.\nDisks remain readable individually on any machine.",
+            text="SnapRAID is a powerful software parity tool. It acts as a safety net, allowing you to pool\n"
+                 "independent hard drives of different sizes and protect them against drive failure.\n"
+                 "Unlike hardware RAID, it does not lock your drives or stripe your data.",
             bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9), justify="left",
         ).pack(anchor="w", pady=(0, 10))
 
@@ -781,41 +820,49 @@ Each device must have the Tailscale app installed and logged in to the SAME acco
 
         guide_content = """SNAPRAID COMPREHENSIVE SETUP GUIDE
 
-SnapRAID is a backup program for disk arrays. It stores parity data to rescue your files if a hard drive fails.
+SnapRAID is a backup program for disk arrays. It stores parity data to rescue your files if a hard drive fails. Unlike standard RAID, SnapRAID does not lock your hard drives together. If your whole PC explodes, you can pull a hard drive out, plug it into any Windows laptop, and read your files perfectly.
 
-PHASE 1: DISK PREPARATION
-1. Dedicate at least one hard drive strictly for Parity. 
-   CRITICAL: Your parity drive MUST be equal to or larger than your largest data drive.
-2. Format your drives in Windows (NTFS) and assign them clear drive letters 
-   (e.g., P: for Parity, D1: for Data 1, D2: for Data 2).
+PHASE 1: THE GOLDEN RULE OF PARITY
+1. You must dedicate at least one hard drive strictly for Parity (Backup Math). 
+   CRITICAL: Your parity drive MUST be equal to or larger than your largest single data drive.
+   (e.g., If you have a 4TB drive and an 8TB drive holding data, your Parity drive MUST be at least 8TB).
 
-PHASE 2: CONFIGURATION
-1. SnapRAID uses a configuration file located at C:\\SnapRAID\\snapraid.conf.
-2. Open this file in Notepad and define your disks exactly like this:
+PHASE 2: DRIVE PREPARATION
+1. Install your hard drives into the computer.
+2. Open Windows "Disk Management". 
+3. Initialize and format your drives as NTFS. 
+4. Assign them clear, memorable drive letters (e.g., P: for Parity, D: for Data 1, E: for Data 2).
+
+PHASE 3: WRITING THE CONFIG FILE
+1. Click the "Install SnapRAID" button above. Wait for the Success notification.
+2. Open Windows File Explorer and navigate to C:\\SnapRAID\\.
+3. Create a new text file named: snapraid.conf
+4. Open it in Notepad and define your disks exactly like this example:
    
    parity P:\\snapraid.parity
    content P:\\snapraid.content
    content C:\\SnapRAID\\snapraid.content
-   content D1:\\snapraid.content
-   data d1 D1:\\FamilyNAS
-   data d2 D2:\\FamilyNAS
+   content D:\\snapraid.content
+   data d1 D:\\FamilyNAS
+   data d2 E:\\FamilyNAS
    
-   (Note: 'content' files are small index files. Keep multiple copies across different drives so SnapRAID always knows where your files were).
+   (Note: 'content' files are tiny index files. Keep multiple copies across different drives as shown above so SnapRAID always knows where your files were).
 
-PHASE 3: INITIALIZATION & SYNC
-1. Open Command Prompt as Administrator.
-2. Run: snapraid sync
-3. This first sync will take a long time depending on how much data you have. It calculates the parity blocks across all your drives.
+PHASE 4: THE FIRST SYNC
+1. Open Windows Command Prompt as Administrator.
+2. Type: cd C:\\SnapRAID
+3. Type: snapraid sync
+4. This first sync will take a long time depending on how much data you have. It calculates the parity blocks across all your drives. Let it run overnight.
 
-PHASE 4: ROUTINE MAINTENANCE (AUTOMATION)
+PHASE 5: AUTOMATING THE BACKUP
 To keep your safety net updated, use the Windows Task Scheduler to run these commands in the background:
 • snapraid sync (Run Daily at 2 AM): Updates the parity with any new or modified files.
 • snapraid scrub (Run Weekly): Checks the disks for silent data corruption (bit rot) and fixes it.
 
-PHASE 5: RESTORING LOST DATA
-If a drive fails or you accidentally delete a file:
-• Undelete a file: snapraid fix -f "FileName.ext"
-• Restore a whole drive: Replace the dead drive, update the drive letter in snapraid.conf if necessary, and run: snapraid fix -d d1"""
+PHASE 6: HOW TO RESTORE LOST DATA
+If a drive dies or you accidentally delete a file, do not panic.
+• Undelete a file: Open Command prompt and run: snapraid fix -f "FileName.ext"
+• Restore a dead drive: Physically replace the dead drive with a new one. Open your snapraid.conf file and update the drive letter to match the new drive. Then run: snapraid fix -d d1"""
         
         txt.insert("1.0", guide_content)
         txt.config(state="disabled")
@@ -1201,58 +1248,63 @@ If a drive fails or you accidentally delete a file:
             return
             
         self.is_processing = True
-        self.set_status("Starting Batch Permissions & SMB Share Deployment...", "info")
 
         def process():
             try:
+                # 1. Determine Master Share Name based on the selected root folder
+                master_share = os.path.basename(root_dir.rstrip("\\/"))
+                if not master_share or len(master_share) == 2 and master_share[1] == ':':
+                    master_share = "RootNAS"
+
+                self.set_status(f"Configuring Master Share: '{master_share}' with Access-Based Enumeration...", "info")
+
+                # 2. Clean up old, overlapping individual shares from previous versions
+                ps_cleanup = f"Get-SmbShare | Where-Object {{ $_.Path -like '{root_dir}\\*' -and $_.Name -ne '{master_share}' }} | Remove-SmbShare -Force"
+                self.run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cleanup], use_shell=False)
+                if not self.is_processing: return
+
+                # 3. Publish Master Share with Access-Based Enumeration (ABE) enabled
+                ps_master = f"""
+                if (Get-SmbShare -Name '{master_share}' -ErrorAction SilentlyContinue) {{
+                    Set-SmbShare -Name '{master_share}' -FolderEnumerationMode AccessBased -Force
+                    Grant-SmbShareAccess -Name '{master_share}' -AccountName 'Authenticated Users' -AccessRight Change -Force
+                }} else {{
+                    New-SmbShare -Name '{master_share}' -Path '{root_dir}' -ChangeAccess 'Authenticated Users' -FolderEnumerationMode AccessBased
+                }}
+                """
+                self.run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_master], use_shell=False)
+                if not self.is_processing: return
+
+                # 4. Grant Authenticated Users read/traverse access to the root folder itself so they can see inside the master share
+                self.run_quiet_cmd(f'icacls "{root_dir}" /grant "Authenticated Users":(RX)', use_shell=True)
+
+                # 5. Isolate all managed subfolders (Break inheritance so ABE actively hides them from unauthorized users)
+                for fpath in self.active_subfolders:
+                    if not self.is_processing: return
+                    self.run_quiet_cmd(f'icacls "{fpath}" /inheritance:r', use_shell=True)
+                    self.run_quiet_cmd(f'icacls "{fpath}" /grant:r "Administrators":(OI)(CI)F', use_shell=True)
+
+                # 6. Apply user-specific explicit permissions to uncloak the folders for them
                 for user, fmap in self.user_folder_permissions.items():
                     for fpath, state in fmap.items():
-                        if not self.is_processing:
-                            return 
+                        if not self.is_processing: return 
 
                         if state["enabled"].get():
-                            
                             if state["full"].get():
                                 ntfs_perm = "F"
-                                ps_access = "Full"
                             elif state["delete"].get() or state["create"].get() or state["upload"].get():
                                 ntfs_perm = "M"
-                                ps_access = "Change"
                             else:
                                 ntfs_perm = "R"
-                                ps_access = "Read"
 
                             rel_name = os.path.basename(fpath)
-                            is_private = (rel_name.lower() == user.lower())
-
                             self.set_status(f"Applying permissions for {user} -> {rel_name}...", "info")
 
-                            if is_private:
-                                if not self.run_quiet_cmd(f'icacls "{fpath}" /inheritance:r', use_shell=True): return
-                                if not self.run_quiet_cmd(f'icacls "{fpath}" /grant:r "Administrators":(OI)(CI)F', use_shell=True): return
-
-                            if not self.run_quiet_cmd(f'icacls "{fpath}" /grant:r "{user}":(OI)(CI){ntfs_perm} /T', use_shell=True): return
-
-                            share_name = rel_name if rel_name else "RootNAS"
-                            
-                            if ps_access == "Full":
-                                creation_args = f"-FullAccess 'Administrators', '{user}'"
-                            else:
-                                creation_args = f"-FullAccess 'Administrators' -{ps_access}Access '{user}'"
-
-                            ps_cmd = (
-                                f"if (Get-SmbShare -Name '{share_name}' -ErrorAction SilentlyContinue) {{ "
-                                f"  Revoke-SmbShareAccess -Name '{share_name}' -AccountName Everyone -Force; "
-                                f"  Grant-SmbShareAccess -Name '{share_name}' -AccountName '{user}' -AccessRight {ps_access} -Force "
-                                f"}} else {{ "
-                                f"  New-SmbShare -Name '{share_name}' -Path '{fpath}' {creation_args} "
-                                f"}}"
-                            )
-                            
-                            if not self.run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd], use_shell=False): return
+                            # Explicitly grant the user rights. ABE sees this and unhides the folder for them.
+                            self.run_quiet_cmd(f'icacls "{fpath}" /grant:r "{user}":(OI)(CI){ntfs_perm} /T', use_shell=True)
 
                 if self.is_processing:
-                    self.set_status("Success! All Permissions and SMB Shares published.", "success")
+                    self.set_status(f"Success! Master Share '{master_share}' published with Access-Based Enumeration.", "success")
             finally:
                 self.is_processing = False
 
