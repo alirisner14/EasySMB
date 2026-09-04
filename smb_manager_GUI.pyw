@@ -196,7 +196,9 @@ class GlassSMBManagerApp:
 
         self.current_process = None
         self.is_processing = False
+        self.current_error_raw = ""
 
+        # Neutral Frosted Glass Palette
         self.palette = {
             "bg_dark": "#161719",
             "bg_tint": "#1a1b1e",
@@ -211,6 +213,8 @@ class GlassSMBManagerApp:
             "text_muted": "#9ca3af",
             "text_glow": "#d1d5db",
             "terminal_bg": "#101113",
+            "success": "#34d399",
+            "error": "#f87171",
         }
 
         self.discovered_users = []
@@ -237,7 +241,7 @@ class GlassSMBManagerApp:
         self.build_smb_vertical_workflow()
         self.build_tailscale_tab()
         self.build_snapraid_tab()
-        self.build_console_bar()
+        self.build_status_bar()
 
         self.refresh_system_users()
 
@@ -735,38 +739,107 @@ class GlassSMBManagerApp:
             font=("Consolas", 9), justify="left",
         ).pack(anchor="w")
 
-    def build_console_bar(self):
-        console_rim, console_card = self.create_glass_card(self.main_container, title="Console")
-        console_rim.pack(fill="x", pady=(4, 8), padx=12)
+    # =========================================================================
+    # REVISED STATUS BAR
+    # =========================================================================
+    def build_status_bar(self):
+        status_rim = tk.Frame(self.main_container, bg=self.palette["glass_rim_light"], padx=1, pady=1)
+        status_rim.pack(fill="x", pady=(4, 8), padx=12)
+        
+        status_shadow = tk.Frame(status_rim, bg=self.palette["glass_rim_shadow"], padx=1, pady=1)
+        status_shadow.pack(fill="both", expand=True)
+        
+        status_card = tk.Frame(status_shadow, bg=self.palette["glass_card"], padx=14, pady=8)
+        status_card.pack(fill="both", expand=True)
 
-        crow = tk.Frame(console_card, bg=self.palette["glass_card"])
-        crow.pack(fill="x")
-
-        self.txt_log = tk.Text(
-            crow,
-            bg=self.palette["terminal_bg"], fg=self.palette["text_glow"], insertbackground="white",
-            relief="flat", font=("Consolas", 9), height=5, wrap="word",
-            highlightthickness=1, highlightbackground=self.palette["well_border"],
+        self.lbl_status = tk.Label(
+            status_card,
+            text="Ready.",
+            bg=self.palette["glass_card"], fg=self.palette["text_muted"],
+            font=("Segoe UI", 10, "bold")
         )
-        
-        scrollbar = ttk.Scrollbar(crow, orient="vertical", command=self.txt_log.yview, style="Vertical.TScrollbar")
-        self.txt_log.configure(yscrollcommand=scrollbar.set)
-        
-        btn_stop = FrostedGlassButton(
-            crow, text="🛑 Stop", command=self.stop_current_operation,
+        self.lbl_status.pack(side="left", fill="x", expand=True, anchor="w")
+
+        FrostedGlassButton(
+            status_card, text="🛑 Stop", command=self.stop_current_operation,
             width=100, height=34, radius=16, color_scheme="danger",
-        )
+        ).pack(side="right")
+
+    def set_status(self, msg, status_type="info", raw_error=None):
+        """Updates the status bar. Converts logs into a sleek message format."""
+        color_map = {
+            "info": self.palette["text_muted"],
+            "success": self.palette["success"],
+            "error": self.palette["error"],
+        }
         
-        btn_stop.pack(side="right", padx=(10, 0))
-        scrollbar.pack(side="right", fill="y")
-        self.txt_log.pack(side="left", fill="both", expand=True)
+        self.lbl_status.config(text=msg, fg=color_map.get(status_type, self.palette["text_muted"]))
+        
+        # Make it clickable only if there's an error
+        if status_type == "error" and raw_error:
+            self.current_error_raw = raw_error
+            self.lbl_status.config(cursor="hand2")
+            self.lbl_status.bind("<Button-1>", lambda e: self.show_error_popup())
+        else:
+            self.current_error_raw = ""
+            self.lbl_status.config(cursor="")
+            self.lbl_status.unbind("<Button-1>")
 
-    def log(self, text):
-        self.txt_log.configure(state="normal")
-        self.txt_log.insert("end", text + "\n")
-        self.txt_log.see("end")
-        self.txt_log.configure(state="disabled")
+    def translate_error(self, err_text):
+        """Attempts to simplify cryptic Windows terminal errors."""
+        err_lower = err_text.lower()
+        if "access is denied" in err_lower or "error 5" in err_lower:
+            return "Windows blocked this action. Ensure you have Administrative rights and that the file/folder isn't currently locked by another program."
+        if "already exists" in err_lower:
+            return "The user account or share name you are trying to create already exists."
+        if "no mapping between account names" in err_lower:
+            return "Windows could not find the user account. It may not have been created successfully."
+        if "cannot find path" in err_lower:
+            return "The specified folder path does not exist or was moved."
+        if "winget" in err_lower and "agreements" in err_lower:
+            return "Windows Package Manager requires you to accept terms. Try running the installer manually once via Command Prompt."
+        
+        return "An unexpected system command failure occurred. See the technical details below."
 
+    def show_error_popup(self):
+        """Displays the layman's error and the raw output in a custom window."""
+        if not getattr(self, "current_error_raw", None): return
+
+        popup = tk.Toplevel(self.root)
+        popup.title("Error Details")
+        popup.geometry("600x400")
+        popup.configure(bg=self.palette["bg_tint"])
+        popup.transient(self.root)
+        popup.grab_set()
+
+        title_lbl = tk.Label(popup, text="Operation Failed", fg=self.palette["error"], bg=self.palette["bg_tint"], font=("Segoe UI", 12, "bold"))
+        title_lbl.pack(anchor="w", padx=16, pady=(16, 4))
+        
+        layman_err = self.translate_error(self.current_error_raw)
+        desc_lbl = tk.Label(popup, text=layman_err, fg=self.palette["text_bright"], bg=self.palette["bg_tint"], font=("Segoe UI", 10), wraplength=560, justify="left")
+        desc_lbl.pack(anchor="w", padx=16, pady=4)
+
+        tk.Label(popup, text="Raw Command Output:", fg=self.palette["text_muted"], bg=self.palette["bg_tint"], font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+
+        well_f = tk.Frame(popup, bg=self.palette["well_border"], padx=1, pady=1)
+        well_f.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+
+        txt = tk.Text(
+            well_f, bg=self.palette["terminal_bg"], fg=self.palette["text_glow"],
+            relief="flat", font=("Consolas", 9), wrap="word", padx=8, pady=8
+        )
+        txt.insert("1.0", self.current_error_raw)
+        txt.config(state="disabled")
+        
+        scroll = ttk.Scrollbar(well_f, orient="vertical", command=txt.yview, style="Vertical.TScrollbar")
+        txt.configure(yscrollcommand=scroll.set)
+        
+        scroll.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+
+    # =========================================================================
+    # SILENT COMMAND EXECUTION HELPERS
+    # =========================================================================
     def run_cmd(self, command_list, success_msg=""):
         try:
             self.current_process = subprocess.Popen(
@@ -778,13 +851,38 @@ class GlassSMBManagerApp:
 
             if rc == 0:
                 if success_msg:
-                    self.log(f"[✓] {success_msg}")
+                    self.set_status(success_msg, "success")
                 return True
             else:
-                self.log(f"[!] Failed:\n{stderr.strip() or stdout.strip()}")
+                raw = stderr.strip() or stdout.strip()
+                self.set_status("Error Occurred! (Click for details)", "error", raw)
                 return False
         except Exception as e:
-            self.log(f"[FATAL] {str(e)}")
+            self.set_status("Error Occurred! (Click for details)", "error", str(e))
+            return False
+        finally:
+            self.current_process = None
+
+    def run_quiet_cmd(self, cmd, use_shell=False):
+        """Runs command silently. Aborts and updates status on failure."""
+        if not self.is_processing:
+            return False
+        try:
+            self.current_process = subprocess.Popen(
+                cmd, shell=use_shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            stdout, stderr = self.current_process.communicate()
+            
+            if self.current_process.returncode != 0:
+                raw = stderr.strip() or stdout.strip()
+                self.set_status("Error Occurred! (Click for details)", "error", raw)
+                self.is_processing = False
+                return False
+            return True
+        except Exception as e:
+            self.set_status("Error Occurred! (Click for details)", "error", str(e))
+            self.is_processing = False
             return False
         finally:
             self.current_process = None
@@ -797,13 +895,13 @@ class GlassSMBManagerApp:
         if self.current_process and self.current_process.poll() is None:
             try:
                 subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.current_process.pid)], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                self.log("[🛑] Active process killed.")
+                self.set_status("Active process killed.", "error", "The task was forcefully terminated by the user.")
             except Exception as e:
-                self.log(f"[!] Error aborting process: {e}")
+                self.set_status("Error aborting process", "error", str(e))
             finally:
                 self.current_process = None
-                
-        self.log("[🛑] Operations halted.")
+        else:
+            self.set_status("No active background task to cancel.", "info")
 
     def refresh_system_users(self):
         def fetch():
@@ -853,9 +951,10 @@ class GlassSMBManagerApp:
             messagebox.showerror("Input Error", "Please enter both Username and Password.")
             return
 
+        self.set_status(f"Creating user '{username}'...", "info")
         def process():
             cmd = ["net", "user", username, password, "/add", "/expires:never"]
-            ok = self.run_cmd(cmd, f"User '{username}' created successfully.")
+            ok = self.run_cmd(cmd, f"Success! User '{username}' created.")
             if ok:
                 self.root.after(0, lambda: self.ent_v_user.delete(0, tk.END))
                 self.root.after(0, lambda: self.ent_v_pass.delete(0, tk.END))
@@ -891,7 +990,7 @@ class GlassSMBManagerApp:
                 os.makedirs(users_dir, exist_ok=True)
                 for user in self.discovered_users:
                     os.makedirs(os.path.join(users_dir, user), exist_ok=True)
-                self.log(f"[✓] Created Private Structure under {users_dir}")
+                self.set_status(f"Created Private Structure under {users_dir}", "success")
 
             elif mode == "multi_shared":
                 shared_dir = os.path.join(root_dir, "Shared")
@@ -900,15 +999,15 @@ class GlassSMBManagerApp:
                 os.makedirs(users_dir, exist_ok=True)
                 for user in self.discovered_users:
                     os.makedirs(os.path.join(users_dir, user), exist_ok=True)
-                self.log(f"[✓] Created Shared & Private Structure under {root_dir}")
+                self.set_status(f"Created Shared & Private Structure under {root_dir}", "success")
 
             elif mode == "single_user":
-                self.log(f"[✓] Configured Single User root: {root_dir}")
+                self.set_status(f"Configured Single User root: {root_dir}", "success")
 
             self.scan_or_populate_folders()
 
         except Exception as e:
-            self.log(f"[!] Failed creating directory structure: {e}")
+            self.set_status("Error Occurred! (Click for details)", "error", str(e))
 
     def scan_or_populate_folders(self):
         root_dir = self.ent_nas_root.get().strip()
@@ -930,14 +1029,14 @@ class GlassSMBManagerApp:
                             if os.path.isdir(u_full):
                                 folders.append(u_full)
         except Exception as e:
-            self.log(f"[!] Scan warning: {e}")
+            self.set_status("Error Occurred! (Click for details)", "error", str(e))
 
         unique_map = {}
         for f in folders:
             unique_map[f.lower()] = f
             
         self.active_subfolders = sorted(list(unique_map.values()))
-        self.log(f"[i] Discovered {len(self.active_subfolders)} unique folders under root.")
+        self.set_status(f"Discovered {len(self.active_subfolders)} folders under root.", "info")
         self.rebuild_permissions_ui()
 
     def rebuild_permissions_ui(self):
@@ -1013,7 +1112,7 @@ class GlassSMBManagerApp:
 
     def apply_all_configured_permissions(self):
         if getattr(self, "is_processing", False):
-            self.log("[!] Process already running. Please wait or press Stop.")
+            self.set_status("Process already running. Please wait or press Stop.", "error", "Task blocked due to concurrency lock.")
             return
 
         root_dir = self.ent_nas_root.get().strip()
@@ -1022,27 +1121,10 @@ class GlassSMBManagerApp:
             return
             
         self.is_processing = True
-
-        def run_quiet_cmd(cmd, use_shell=False):
-            if not self.is_processing:
-                return False
-            try:
-                self.current_process = subprocess.Popen(
-                    cmd, shell=use_shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True, creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                stdout, stderr = self.current_process.communicate()
-                return self.current_process.returncode == 0
-            except Exception as e:
-                self.log(f"[!] Error executing background task: {e}")
-                return False
-            finally:
-                self.current_process = None
+        self.set_status("Starting Batch Permissions & SMB Share Deployment...", "info")
 
         def process():
             try:
-                self.log("[*] Starting Batch Permissions & SMB Share Deployment...")
-
                 for user, fmap in self.user_folder_permissions.items():
                     for fpath, state in fmap.items():
                         if not self.is_processing:
@@ -1063,15 +1145,13 @@ class GlassSMBManagerApp:
                             rel_name = os.path.basename(fpath)
                             is_private = (rel_name.lower() == user.lower())
 
-                            if is_private:
-                                run_quiet_cmd(f'icacls "{fpath}" /inheritance:r', use_shell=True)
-                                if not self.is_processing: return
-                                
-                                run_quiet_cmd(f'icacls "{fpath}" /grant:r "Administrators":(OI)(CI)F', use_shell=True)
-                                if not self.is_processing: return
+                            self.set_status(f"Applying permissions for {user} -> {rel_name}...", "info")
 
-                            run_quiet_cmd(f'icacls "{fpath}" /grant:r "{user}":(OI)(CI){ntfs_perm} /T', use_shell=True)
-                            if not self.is_processing: return
+                            if is_private:
+                                if not self.run_quiet_cmd(f'icacls "{fpath}" /inheritance:r', use_shell=True): return
+                                if not self.run_quiet_cmd(f'icacls "{fpath}" /grant:r "Administrators":(OI)(CI)F', use_shell=True): return
+
+                            if not self.run_quiet_cmd(f'icacls "{fpath}" /grant:r "{user}":(OI)(CI){ntfs_perm} /T', use_shell=True): return
 
                             share_name = rel_name if rel_name else "RootNAS"
                             
@@ -1089,13 +1169,10 @@ class GlassSMBManagerApp:
                                 f"}}"
                             )
                             
-                            run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd], use_shell=False)
-                            
-                            if self.is_processing:
-                                self.log(f"[✓] Configured '{share_name}' for '{user}' (Rights: {ps_access})")
+                            if not self.run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd], use_shell=False): return
 
                 if self.is_processing:
-                    self.log("[✓] All Permissions and SMB Shares published successfully.")
+                    self.set_status("Success! All Permissions and SMB Shares published.", "success")
             finally:
                 self.is_processing = False
 
@@ -1116,25 +1193,30 @@ class GlassSMBManagerApp:
 
             entry = f"\n127.0.0.1\t{alias_clean}\n"
             if alias_clean in content:
-                self.log(f"[i] Alias '{alias_clean}' already exists in hosts file.")
+                self.set_status(f"Alias '{alias_clean}' already exists in hosts file.", "info")
             else:
                 with open(hosts_path, "a") as f:
                     f.write(entry)
-                self.log(f"[✓] Added alias '{alias_clean}' -> 127.0.0.1 in hosts file.")
+                self.set_status(f"Success! Added alias '{alias_clean}' -> 127.0.0.1 in hosts file.", "success")
 
-            messagebox.showinfo("Success", f"Alias '{alias_clean}' successfully mapped!")
         except Exception as e:
-            self.log(f"[!] Failed editing hosts file: {e}")
+            self.set_status("Error Occurred! (Click for details)", "error", str(e))
 
     def install_tailscale(self):
-        cmd = ["winget", "install", "-e", "--id", "Tailscale.Tailscale", "--silent"]
-        self.log("Fetching Tailscale via Windows Package Manager...")
-        self.run_cmd_thread(cmd, "Tailscale package successfully installed.")
+        cmd = [
+            "winget", "install", "-e", "--id", "Tailscale.Tailscale", 
+            "--silent", "--accept-package-agreements", "--accept-source-agreements"
+        ]
+        self.set_status("Fetching Tailscale via Windows Package Manager...", "info")
+        self.run_cmd_thread(cmd, "Success! Tailscale installed.")
 
     def install_snapraid(self):
-        cmd = ["winget", "install", "-e", "--id", "SnapRAID.SnapRAID", "--silent"]
-        self.log("Fetching SnapRAID via Windows Package Manager...")
-        self.run_cmd_thread(cmd, "SnapRAID package successfully installed.")
+        cmd = [
+            "winget", "install", "-e", "--id", "SnapRAID.SnapRAID", 
+            "--silent", "--accept-package-agreements", "--accept-source-agreements"
+        ]
+        self.set_status("Fetching SnapRAID via Windows Package Manager...", "info")
+        self.run_cmd_thread(cmd, "Success! SnapRAID installed.")
 
 
 if __name__ == "__main__":
