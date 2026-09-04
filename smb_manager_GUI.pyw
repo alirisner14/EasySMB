@@ -661,8 +661,8 @@ class GlassSMBManagerApp:
         panel = tk.Frame(self.tab_tailscale, bg=self.palette["bg_tint"])
         panel.pack(fill="both", expand=True, pady=6)
 
-        card_rim, card = self.create_glass_card(panel, title="Encrypted Mesh Bridge")
-        card_rim.pack(fill="both", expand=True)
+        card_rim, card = self.create_glass_card(panel, title="Encrypted Mesh Bridge & Server Authentication")
+        card_rim.pack(fill="x", pady=(0, 6))
 
         tk.Label(
             card,
@@ -678,35 +678,81 @@ class GlassSMBManagerApp:
             width=200, height=36, radius=18, color_scheme="neutral",
         ).pack(side="left", padx=(0, 12))
 
+        def auth_tailscale():
+            ts_path = r"C:\Program Files\Tailscale\tailscale.exe"
+            if os.path.exists(ts_path):
+                self.run_cmd_thread([ts_path, "up"], "Tailscale web login active.")
+            else:
+                self.set_status("Tailscale not found. Please install it first.", "error")
+
         FrostedGlassButton(
-            btn_row, text="Authenticate Node (tailscale up)", command=lambda: self.run_cmd_thread(["tailscale", "up"], "Tailscale web login active."),
+            btn_row, text="Authenticate Node (Login)", command=auth_tailscale,
             width=240, height=36, radius=18, color_scheme="accent",
         ).pack(side="left")
 
-        guide_rim, guide_frame = self.create_glass_card(card, title="Mobile Client Setup")
-        guide_rim.pack(fill="both", expand=True, pady=(12, 0))
+        guide_rim, guide_frame = self.create_glass_card(panel, title="Comprehensive Setup & Client Connection Guide")
+        guide_rim.pack(fill="both", expand=True, pady=(6, 0))
 
-        guide_content = (
-            "📱 CONNECTING PHONES & EXTERNAL CLIENTS:\n\n"
-            "1. Apple iOS (Files App):\n"
-            "   • Open 'Files' → tap '...' (top right) → select 'Connect to Server'.\n"
-            "   • Enter: smb://100.x.y.z  (or smb://<hostname> if MagicDNS is enabled).\n"
-            "   • Authenticate as Registered User with the SMB username & password.\n\n"
-            "2. Android (Cx File Explorer / Solid Explorer):\n"
-            "   • In Cx File Explorer: Network → New Location → SMB/LAN.\n"
-            "   • Enter host IP (or hostname) and SMB credentials."
+        txt = tk.Text(
+            guide_frame, bg=self.palette["well_bg"], fg=self.palette["text_frost"],
+            font=("Consolas", 9), wrap="word", relief="flat", padx=12, pady=12
         )
-        tk.Label(
-            guide_frame, text=guide_content, bg=self.palette["glass_card"], fg=self.palette["text_muted"],
-            font=("Consolas", 9), justify="left",
-        ).pack(anchor="w")
+        
+        scroll = ttk.Scrollbar(guide_frame, orient="vertical", command=txt.yview, style="Vertical.TScrollbar")
+        txt.configure(yscrollcommand=scroll.set)
+        
+        scroll.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+
+        guide_content = """TAILSCALE COMPREHENSIVE SETUP GUIDE
+
+PHASE 1: SERVER CONFIGURATION (DASHBOARD)
+1. Authenticate Node: Click the 'Authenticate Node' button above to log this server into Tailscale.
+2. Disable Key Expiry: 
+   • Go to login.tailscale.com -> Machines in your browser.
+   • Click the (...) menu next to this NAS PC and select "Disable Key Expiry".
+     (This ensures your server doesn't randomly disconnect after 180 days).
+3. Enable MagicDNS:
+   • Go to the DNS tab in the Tailscale dashboard.
+   • Toggle MagicDNS ON. This lets devices connect using the computer's name (e.g., FamilyNAS) instead of an IP address.
+
+PHASE 2: CONNECTING CLIENT DEVICES
+Each device must have the Tailscale app installed and logged in to the SAME account you used for the server.
+
+▶ Windows PCs & Laptops
+   1. Install Tailscale and log in.
+   2. Open File Explorer. In the top address bar, type: \\\\FamilyNAS (or your PC's name) and press Enter.
+   3. Enter the local Windows Username and Password you created for them in Step 1.
+   4. Right-click the folder and select "Pin to Quick Access".
+
+▶ Apple iPhone & iPad (Native Support)
+   1. Install Tailscale from the App Store, log in, and ensure the VPN is Active.
+   2. Open the native Apple 'Files' app.
+   3. Tap 'Browse' at the bottom, then the (...) menu in the top right.
+   4. Select 'Connect to Server'.
+   5. Enter: smb://FamilyNAS
+   6. Select 'Registered User' and enter their Windows credentials.
+
+▶ Android Phones & Tablets (Cx File Explorer)
+   Android does not have native SMB support. You must use a trusted 3rd-party file manager.
+   1. Install Tailscale from Google Play, log in, and connect.
+   2. Install 'Cx File Explorer' from Google Play (recommended, no ads, great UI).
+   3. Open Cx File Explorer -> Network tab -> [+] New Location -> Remote -> SMB.
+   4. Host: FamilyNAS
+   5. Port: (Leave blank)
+   6. Username & Password: Enter their specific credentials.
+   7. Check "Display password" to verify, then tap OK.
+   8. A permanent shortcut will now exist on the Network tab to easily access their files."""
+        
+        txt.insert("1.0", guide_content)
+        txt.config(state="disabled")
 
     def build_snapraid_tab(self):
         panel = tk.Frame(self.tab_snapraid, bg=self.palette["bg_tint"])
         panel.pack(fill="both", expand=True, pady=6)
 
         card_rim, card = self.create_glass_card(panel, title="SnapRAID Parity Architecture")
-        card_rim.pack(fill="both", expand=True)
+        card_rim.pack(fill="x", pady=(0, 6))
 
         tk.Label(
             card,
@@ -719,25 +765,60 @@ class GlassSMBManagerApp:
             width=220, height=36, radius=18, color_scheme="neutral",
         ).pack(anchor="w", pady=4)
 
-        guide_rim, guide_frame = self.create_glass_card(card, title="Parity Setup Guide")
-        guide_rim.pack(fill="both", expand=True, pady=(12, 0))
+        guide_rim, guide_frame = self.create_glass_card(panel, title="Comprehensive Parity Setup Guide")
+        guide_rim.pack(fill="both", expand=True, pady=(6, 0))
 
-        guide_content = (
-            "✦ SNAPRAID CHECKLIST:\n\n"
-            "1. Parity Sizing: The parity drive MUST be ≥ your largest data drive.\n"
-            "2. Configuration (C:\\SnapRAID\\snapraid.conf):\n"
-            "     parity P:\\snapraid.parity\n"
-            "     content P:\\snapraid.content\n"
-            "     content D:\\snapraid.content\n"
-            "     data d1 D:\\MainNAS\n"
-            "3. Routine Maintenance:\n"
-            "   • snapraid sync  (Recalculates parity snapshots)\n"
-            "   • snapraid scrub (Scans silent data decay and bit rot)"
+        txt = tk.Text(
+            guide_frame, bg=self.palette["well_bg"], fg=self.palette["text_frost"],
+            font=("Consolas", 9), wrap="word", relief="flat", padx=12, pady=12
         )
-        tk.Label(
-            guide_frame, text=guide_content, bg=self.palette["glass_card"], fg=self.palette["text_muted"],
-            font=("Consolas", 9), justify="left",
-        ).pack(anchor="w")
+        
+        scroll = ttk.Scrollbar(guide_frame, orient="vertical", command=txt.yview, style="Vertical.TScrollbar")
+        txt.configure(yscrollcommand=scroll.set)
+        
+        scroll.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+
+        guide_content = """SNAPRAID COMPREHENSIVE SETUP GUIDE
+
+SnapRAID is a backup program for disk arrays. It stores parity data to rescue your files if a hard drive fails.
+
+PHASE 1: DISK PREPARATION
+1. Dedicate at least one hard drive strictly for Parity. 
+   CRITICAL: Your parity drive MUST be equal to or larger than your largest data drive.
+2. Format your drives in Windows (NTFS) and assign them clear drive letters 
+   (e.g., P: for Parity, D1: for Data 1, D2: for Data 2).
+
+PHASE 2: CONFIGURATION
+1. SnapRAID uses a configuration file located at C:\\SnapRAID\\snapraid.conf.
+2. Open this file in Notepad and define your disks exactly like this:
+   
+   parity P:\\snapraid.parity
+   content P:\\snapraid.content
+   content C:\\SnapRAID\\snapraid.content
+   content D1:\\snapraid.content
+   data d1 D1:\\FamilyNAS
+   data d2 D2:\\FamilyNAS
+   
+   (Note: 'content' files are small index files. Keep multiple copies across different drives so SnapRAID always knows where your files were).
+
+PHASE 3: INITIALIZATION & SYNC
+1. Open Command Prompt as Administrator.
+2. Run: snapraid sync
+3. This first sync will take a long time depending on how much data you have. It calculates the parity blocks across all your drives.
+
+PHASE 4: ROUTINE MAINTENANCE (AUTOMATION)
+To keep your safety net updated, use the Windows Task Scheduler to run these commands in the background:
+• snapraid sync (Run Daily at 2 AM): Updates the parity with any new or modified files.
+• snapraid scrub (Run Weekly): Checks the disks for silent data corruption (bit rot) and fixes it.
+
+PHASE 5: RESTORING LOST DATA
+If a drive fails or you accidentally delete a file:
+• Undelete a file: snapraid fix -f "FileName.ext"
+• Restore a whole drive: Replace the dead drive, update the drive letter in snapraid.conf if necessary, and run: snapraid fix -d d1"""
+        
+        txt.insert("1.0", guide_content)
+        txt.config(state="disabled")
 
     # =========================================================================
     # REVISED STATUS BAR
@@ -775,7 +856,6 @@ class GlassSMBManagerApp:
         
         self.lbl_status.config(text=msg, fg=color_map.get(status_type, self.palette["text_muted"]))
         
-        # Make it clickable only if there's an error
         if status_type == "error" and raw_error:
             self.current_error_raw = raw_error
             self.lbl_status.config(cursor="hand2")
