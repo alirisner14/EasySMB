@@ -11,7 +11,6 @@ from tkinter import filedialog, messagebox, ttk
 
 
 def is_admin():
-    """Check if the script is currently running with administrative rights."""
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
     except Exception:
@@ -19,45 +18,23 @@ def is_admin():
 
 
 def run_as_admin():
-    """Re-launch the current script with elevated Administrator privileges."""
     if not is_admin():
         executable = sys.executable
         if executable.lower().endswith("python.exe"):
             executable = executable.replace("python.exe", "pythonw.exe")
             
         ctypes.windll.shell32.ShellExecuteW(
-            None,
-            "runas",
-            executable,
-            " ".join(f'"{arg}"' for arg in sys.argv),
-            None,
-            1,
+            None, "runas", executable, " ".join(f'"{arg}"' for arg in sys.argv), None, 1
         )
         sys.exit(0)
 
 
 class FrostedGlassButton(tk.Canvas):
-    """Skeuomorphic button with rounded corners and liquid specular sheen."""
-
     def __init__(
-        self,
-        parent,
-        text,
-        command,
-        width=180,
-        height=38,
-        radius=18,
-        color_scheme="neutral",
-        **kwargs,
+        self, parent, text, command, width=180, height=38, radius=18, color_scheme="neutral", **kwargs
     ):
         super().__init__(
-            parent,
-            width=width,
-            height=height,
-            highlightthickness=0,
-            bd=0,
-            bg=parent["bg"],
-            **kwargs,
+            parent, width=width, height=height, highlightthickness=0, bd=0, bg=parent["bg"], **kwargs
         )
         self.command = command
         self.text = text
@@ -69,67 +46,25 @@ class FrostedGlassButton(tk.Canvas):
         self.is_pressed = False
 
         if self.color_scheme == "accent":
-            self.colors = {
-                "base": "#2b384e",
-                "hover": "#364763",
-                "press": "#202b3d",
-                "rim_light": "#6a88b5",
-                "rim_dark": "#161e2b",
-                "text": "#ffffff",
-                "glow": "#4d79ff",
-            }
+            self.colors = {"base": "#2b384e", "hover": "#364763", "press": "#202b3d", "rim_light": "#6a88b5", "rim_dark": "#161e2b", "text": "#ffffff", "glow": "#4d79ff"}
         elif self.color_scheme == "danger":
-            self.colors = {
-                "base": "#4a2424",
-                "hover": "#5e2e2e",
-                "press": "#331919",
-                "rim_light": "#944d4d",
-                "rim_dark": "#1f0f0f",
-                "text": "#ffcccc",
-                "glow": "#ff6666",
-            }
+            self.colors = {"base": "#4a2424", "hover": "#5e2e2e", "press": "#331919", "rim_light": "#944d4d", "rim_dark": "#1f0f0f", "text": "#ffcccc", "glow": "#ff6666"}
         elif self.color_scheme == "nav":
-            self.colors = {
-                "base": "#1a1b1e",
-                "hover": "#25272c",
-                "press": "#141517",
-                "rim_light": "#36383f",
-                "rim_dark": "#0e0f11",
-                "text": "#9ca3af",
-                "glow": "#4a4d55",
-            }
+            self.colors = {"base": "#1a1b1e", "hover": "#25272c", "press": "#141517", "rim_light": "#36383f", "rim_dark": "#0e0f11", "text": "#9ca3af", "glow": "#4a4d55"}
         elif self.color_scheme == "nav_active":
-            self.colors = {
-                "base": "#282a2f",
-                "hover": "#32353b",
-                "press": "#1e2023",
-                "rim_light": "#5c6370",
-                "rim_dark": "#141517",
-                "text": "#ffffff",
-                "glow": "#828997",
-            }
-        else:  # Neutral Frosted
-            self.colors = {
-                "base": "#282a2e",
-                "hover": "#33363b",
-                "press": "#1e2023",
-                "rim_light": "#4a4d53",
-                "rim_dark": "#141517",
-                "text": "#e5e7eb",
-                "glow": "#9ca3af",
-            }
+            self.colors = {"base": "#282a2f", "hover": "#32353b", "press": "#1e2023", "rim_light": "#5c6370", "rim_dark": "#141517", "text": "#ffffff", "glow": "#828997"}
+        else:
+            self.colors = {"base": "#282a2e", "hover": "#33363b", "press": "#1e2023", "rim_light": "#4a4d53", "rim_dark": "#141517", "text": "#e5e7eb", "glow": "#9ca3af"}
 
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<ButtonPress-1>", self._on_press)
         self.bind("<ButtonRelease-1>", self._on_release)
-
         self.redraw()
 
     def _draw_rounded_rect(self, x1, y1, x2, y2, r, **kwargs):
         points = [
-            x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
-            x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+            x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
             x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
         ]
         return self.create_polygon(points, smooth=True, **kwargs)
@@ -137,43 +72,25 @@ class FrostedGlassButton(tk.Canvas):
     def redraw(self):
         self.delete("all")
         w, h, r = self.w, self.h, self.r
-
         self._draw_rounded_rect(1, 2, w - 1, h, r, fill=self.colors["rim_dark"])
         top_rim_color = self.colors["glow"] if self.is_hovered else self.colors["rim_light"]
         self._draw_rounded_rect(1, 1, w - 1, h - 1, r, fill=top_rim_color)
-
-        fill_col = self.colors["base"]
-        if self.is_pressed:
-            fill_col = self.colors["press"]
-        elif self.is_hovered:
-            fill_col = self.colors["hover"]
-
+        fill_col = self.colors["press"] if self.is_pressed else self.colors["hover"] if self.is_hovered else self.colors["base"]
         offset = 2 if self.is_pressed else 1
         self._draw_rounded_rect(2, 1 + offset, w - 2, h - 2 + offset, r - 1, fill=fill_col)
 
         if not self.is_pressed:
-            sheen = "#3d4147" if "neutral" in self.color_scheme else "#405370"
-            if self.color_scheme == "danger":
-                sheen = "#592b2b"
-            elif "nav" in self.color_scheme:
-                sheen = "#2c2e33"
+            sheen = "#592b2b" if self.color_scheme == "danger" else "#2c2e33" if "nav" in self.color_scheme else ("#3d4147" if "neutral" in self.color_scheme else "#405370")
             self._draw_rounded_rect(4, 3, w - 4, int(h * 0.45), r - 2, fill=sheen)
 
-        self.create_text(
-            w // 2,
-            (h // 2) + (1 if self.is_pressed else 0),
-            text=self.text,
-            fill=self.colors["text"],
-            font=("Segoe UI", 9, "bold"),
-        )
+        self.create_text(w // 2, (h // 2) + (1 if self.is_pressed else 0), text=self.text, fill=self.colors["text"], font=("Segoe UI", 9, "bold"))
 
     def _on_enter(self, e):
         self.is_hovered = True
         self.redraw()
 
     def _on_leave(self, e):
-        self.is_hovered = False
-        self.is_pressed = False
+        self.is_hovered, self.is_pressed = False, False
         self.redraw()
 
     def _on_press(self, e):
@@ -191,11 +108,10 @@ class FrostedGlassButton(tk.Canvas):
 class GlassSMBManagerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Glass SMB & Private Storage Core (Administrator)")
+        self.root.title("Easy SMB & Private Storage Core (Administrator)")
         self.root.geometry("1140x880")
         self.root.minsize(1060, 800)
 
-        # Look for Favicon
         icon_path = "app_icon.ico"
         if os.path.exists(icon_path):
             try:
@@ -205,30 +121,18 @@ class GlassSMBManagerApp:
 
         self.current_process = None
         self.is_processing = False
-        self.current_error_raw = ""
+        self.current_output_raw = ""
+        self.current_output_title = ""
+        self.current_output_desc = ""
 
-        # Neutral Frosted Glass Palette
         self.palette = {
-            "bg_dark": "#161719",
-            "bg_tint": "#1a1b1e",
-            "glass_card": "#212327",
-            "glass_rim_light": "#3b3e45",
-            "glass_rim_shadow": "#0d0e10",
-            "well_bg": "#141517",
-            "well_border": "#2c2f35",
-            "well_inner_glow": "#1f2126",
-            "text_bright": "#ffffff",
-            "text_frost": "#e5e7eb",
-            "text_muted": "#9ca3af",
-            "text_glow": "#d1d5db",
-            "terminal_bg": "#101113",
-            "success": "#34d399",
-            "error": "#f87171",
+            "bg_dark": "#161719", "bg_tint": "#1a1b1e", "glass_card": "#212327", "glass_rim_light": "#3b3e45",
+            "glass_rim_shadow": "#0d0e10", "well_bg": "#141517", "well_border": "#2c2f35", "well_inner_glow": "#1f2126",
+            "text_bright": "#ffffff", "text_frost": "#e5e7eb", "text_muted": "#9ca3af", "text_glow": "#d1d5db",
+            "terminal_bg": "#101113", "success": "#34d399", "error": "#f87171", "info_click": "#60a5fa"
         }
 
-        self.discovered_users = []
-        self.active_subfolders = []
-        self.user_folder_permissions = {}
+        self.discovered_users, self.active_subfolders, self.user_folder_permissions = [], [], {}
 
         self.setup_window_backdrop()
         self.setup_ttk_styles()
@@ -236,14 +140,9 @@ class GlassSMBManagerApp:
         self.main_container = tk.Frame(self.root, bg=self.palette["bg_tint"])
         self.main_container.place(relx=0.5, rely=0.5, relwidth=0.96, relheight=0.96, anchor="center")
 
-        # Top Logo Header
         self.header_frame = tk.Frame(self.main_container, bg=self.palette["bg_tint"])
         self.header_frame.pack(fill="x", padx=12, pady=(10, 0))
-        lbl_logo = tk.Label(
-            self.header_frame, text="⛁ Glass SMB Core", 
-            bg=self.palette["bg_tint"], fg=self.palette["text_bright"], font=("Segoe UI", 16, "bold")
-        )
-        lbl_logo.pack(side="left")
+        tk.Label(self.header_frame, text="⛁ Easy SMB Core", bg=self.palette["bg_tint"], fg=self.palette["text_bright"], font=("Segoe UI", 16, "bold")).pack(side="left")
 
         self.notebook = ttk.Notebook(self.main_container)
         self.notebook.pack(fill="both", expand=True, padx=12, pady=(10, 4))
@@ -252,9 +151,9 @@ class GlassSMBManagerApp:
         self.tab_tailscale = tk.Frame(self.notebook, bg=self.palette["bg_tint"])
         self.tab_snapraid = tk.Frame(self.notebook, bg=self.palette["bg_tint"])
 
-        self.notebook.add(self.tab_smb, text="  ✦ User & SMB Vault  ")
-        self.notebook.add(self.tab_tailscale, text="  ☁ Remote Mesh (Tailscale)  ")
-        self.notebook.add(self.tab_snapraid, text="  ⛁ Parity Pool (SnapRAID)  ")
+        self.notebook.add(self.tab_smb, text="  ✦ User & Folder Setup  ")
+        self.notebook.add(self.tab_tailscale, text="  ☁ Remote Access (Tailscale)  ")
+        self.notebook.add(self.tab_snapraid, text="  ⛁ Backup & Recovery (SnapRAID)  ")
 
         self.build_smb_vertical_workflow()
         self.build_tailscale_tab()
@@ -279,59 +178,15 @@ class GlassSMBManagerApp:
     def setup_ttk_styles(self):
         style = ttk.Style()
         style.theme_use("clam")
-
         style.configure("TNotebook", background=self.palette["bg_tint"], borderwidth=0, tabmargins=[0, 0, 0, 8])
-        style.configure(
-            "TNotebook.Tab",
-            background="#1e2024",
-            foreground=self.palette["text_muted"],
-            padding=[20, 8],
-            font=("Segoe UI", 10, "bold"),
-            borderwidth=1,
-            relief="flat",
-        )
-        style.map(
-            "TNotebook.Tab",
-            background=[("selected", "#32353b"), ("active", "#282a2f")],
-            foreground=[("selected", self.palette["text_bright"]), ("active", self.palette["text_frost"])],
-        )
-
-        style.configure(
-            "Glass.TCheckbutton",
-            background=self.palette["well_bg"],
-            foreground=self.palette["text_frost"],
-            font=("Segoe UI", 9, "bold"),
-        )
-        style.map(
-            "Glass.TCheckbutton",
-            background=[("active", self.palette["well_bg"])],
-            foreground=[("active", "#ffffff")],
-        )
-
-        style.configure(
-            "Glass.TRadiobutton",
-            background=self.palette["glass_card"],
-            foreground=self.palette["text_frost"],
-            font=("Segoe UI", 9, "bold"),
-        )
-        style.map(
-            "Glass.TRadiobutton",
-            background=[("active", self.palette["glass_card"])],
-            foreground=[("active", "#ffffff")],
-        )
-        
-        style.configure(
-            "Dark.TCheckbutton",
-            background=self.palette["glass_rim_shadow"], 
-            foreground=self.palette["text_bright"],
-            font=("Segoe UI", 9),
-        )
-        style.map(
-            "Dark.TCheckbutton",
-            background=[("active", self.palette["glass_rim_shadow"])],
-            foreground=[("active", "#ffffff")],
-        )
-        
+        style.configure("TNotebook.Tab", background="#1e2024", foreground=self.palette["text_muted"], padding=[20, 8], font=("Segoe UI", 10, "bold"), borderwidth=1, relief="flat")
+        style.map("TNotebook.Tab", background=[("selected", "#32353b"), ("active", "#282a2f")], foreground=[("selected", self.palette["text_bright"]), ("active", self.palette["text_frost"])])
+        style.configure("Glass.TCheckbutton", background=self.palette["well_bg"], foreground=self.palette["text_frost"], font=("Segoe UI", 9, "bold"))
+        style.map("Glass.TCheckbutton", background=[("active", self.palette["well_bg"])], foreground=[("active", "#ffffff")])
+        style.configure("Glass.TRadiobutton", background=self.palette["glass_card"], foreground=self.palette["text_frost"], font=("Segoe UI", 9, "bold"))
+        style.map("Glass.TRadiobutton", background=[("active", self.palette["glass_card"])], foreground=[("active", "#ffffff")])
+        style.configure("Dark.TCheckbutton", background=self.palette["glass_rim_shadow"], foreground=self.palette["text_bright"], font=("Segoe UI", 9))
+        style.map("Dark.TCheckbutton", background=[("active", self.palette["glass_rim_shadow"])], foreground=[("active", "#ffffff")])
         style.configure("Vertical.TScrollbar", background=self.palette["glass_card"], troughcolor=self.palette["well_bg"])
 
     def create_glass_card(self, parent, title=""):
@@ -340,363 +195,193 @@ class GlassSMBManagerApp:
         shadow_rim.pack(fill="both", expand=True)
         card = tk.Frame(shadow_rim, bg=self.palette["glass_card"], padx=14, pady=10)
         card.pack(fill="both", expand=True)
-
         if title:
             header_box = tk.Frame(card, bg=self.palette["glass_card"])
             header_box.pack(fill="x", pady=(0, 6))
-
             bead = tk.Canvas(header_box, width=8, height=8, bg=self.palette["glass_card"], highlightthickness=0)
             bead.pack(side="left", padx=(0, 8))
             bead.create_oval(0, 0, 7, 7, fill="#6b7280", outline="")
-
-            lbl = tk.Label(
-                header_box,
-                text=title.upper(),
-                bg=self.palette["glass_card"],
-                fg=self.palette["text_glow"],
-                font=("Segoe UI", 8, "bold"),
-            )
-            lbl.pack(side="left")
-
+            tk.Label(header_box, text=title.upper(), bg=self.palette["glass_card"], fg=self.palette["text_glow"], font=("Segoe UI", 8, "bold")).pack(side="left")
         return outer_rim, card
 
     def create_glass_entry(self, parent, width=25, show=None):
         well_rim = tk.Frame(parent, bg=self.palette["well_border"], padx=1, pady=1)
-        entry = tk.Entry(
-            well_rim,
-            width=width,
-            show=show,
-            bg=self.palette["well_bg"],
-            fg=self.palette["text_bright"],
-            insertbackground="#9ca3af",
-            relief="flat",
-            font=("Segoe UI", 10),
-            highlightthickness=1,
-            highlightbackground=self.palette["well_inner_glow"],
-            highlightcolor="#6b7280",
-        )
+        entry = tk.Entry(well_rim, width=width, show=show, bg=self.palette["well_bg"], fg=self.palette["text_bright"], insertbackground="#9ca3af", relief="flat", font=("Segoe UI", 10), highlightthickness=1, highlightbackground=self.palette["well_inner_glow"], highlightcolor="#6b7280")
         entry.pack(fill="both", expand=True)
         return well_rim, entry
 
     def build_smb_vertical_workflow(self):
         workflow_container = tk.Frame(self.tab_smb, bg=self.palette["bg_tint"])
         workflow_container.pack(fill="both", expand=True, pady=4)
-
         self.vert_nav_frame = tk.Frame(workflow_container, bg=self.palette["bg_tint"], width=190)
         self.vert_nav_frame.pack(side="left", fill="y", padx=(0, 8))
-
         self.vert_view_pane = tk.Frame(workflow_container, bg=self.palette["bg_tint"])
         self.vert_view_pane.pack(side="right", fill="both", expand=True)
 
-        self.nav_btn_step1 = FrostedGlassButton(
-            self.vert_nav_frame, text="1. Initial Setup", command=lambda: self.switch_vertical_tab(1),
-            width=180, height=42, radius=16, color_scheme="nav_active"
-        )
+        self.nav_btn_step1 = FrostedGlassButton(self.vert_nav_frame, text="1. Create Users", command=lambda: self.switch_vertical_tab(1), width=180, height=42, radius=16, color_scheme="nav_active")
         self.nav_btn_step1.pack(pady=4)
-
-        self.nav_btn_step2 = FrostedGlassButton(
-            self.vert_nav_frame, text="2. Permissions", command=lambda: self.switch_vertical_tab(2),
-            width=180, height=42, radius=16, color_scheme="nav"
-        )
+        self.nav_btn_step2 = FrostedGlassButton(self.vert_nav_frame, text="2. Folders & Security", command=lambda: self.switch_vertical_tab(2), width=180, height=42, radius=16, color_scheme="nav")
         self.nav_btn_step2.pack(pady=4)
-
-        self.nav_btn_step3 = FrostedGlassButton(
-            self.vert_nav_frame, text="3. Domain Setup", command=lambda: self.switch_vertical_tab(3),
-            width=180, height=42, radius=16, color_scheme="nav"
-        )
+        self.nav_btn_step3 = FrostedGlassButton(self.vert_nav_frame, text="3. Server Name", command=lambda: self.switch_vertical_tab(3), width=180, height=42, radius=16, color_scheme="nav")
         self.nav_btn_step3.pack(pady=4)
 
-        self.view_step1 = tk.Frame(self.vert_view_pane, bg=self.palette["bg_tint"])
-        self.view_step2 = tk.Frame(self.vert_view_pane, bg=self.palette["bg_tint"])
-        self.view_step3 = tk.Frame(self.vert_view_pane, bg=self.palette["bg_tint"])
-
+        self.view_step1, self.view_step2, self.view_step3 = tk.Frame(self.vert_view_pane, bg=self.palette["bg_tint"]), tk.Frame(self.vert_view_pane, bg=self.palette["bg_tint"]), tk.Frame(self.vert_view_pane, bg=self.palette["bg_tint"])
         self.build_vview_step1()
         self.build_vview_step2()
         self.build_vview_step3()
-
         self.active_vtab = 1
         self.view_step1.pack(fill="both", expand=True)
 
     def switch_vertical_tab(self, tab_num):
         self.active_vtab = tab_num
-        self.view_step1.pack_forget()
-        self.view_step2.pack_forget()
-        self.view_step3.pack_forget()
-
+        for view in [self.view_step1, self.view_step2, self.view_step3]: view.pack_forget()
         self.nav_btn_step1.color_scheme = "nav_active" if tab_num == 1 else "nav"
         self.nav_btn_step2.color_scheme = "nav_active" if tab_num == 2 else "nav"
         self.nav_btn_step3.color_scheme = "nav_active" if tab_num == 3 else "nav"
-        self.nav_btn_step1.redraw()
-        self.nav_btn_step2.redraw()
-        self.nav_btn_step3.redraw()
+        for btn in [self.nav_btn_step1, self.nav_btn_step2, self.nav_btn_step3]: btn.redraw()
 
-        if tab_num == 1:
-            self.view_step1.pack(fill="both", expand=True)
+        if tab_num == 1: self.view_step1.pack(fill="both", expand=True)
         elif tab_num == 2:
             self.refresh_system_users()
             self.view_step2.pack(fill="both", expand=True)
-        elif tab_num == 3:
-            self.view_step3.pack(fill="both", expand=True)
+        elif tab_num == 3: self.view_step3.pack(fill="both", expand=True)
 
     def build_vview_step1(self):
         user_rim, user_card = self.create_glass_card(self.view_step1, title="Step 1: Create Local User Accounts")
         user_rim.pack(fill="x", pady=4)
-
-        desc = (
-            "Create standard local Windows credentials dedicated for SMB and network file access.\n"
-            "You can add Admins or solitary accounts and stay here, or advance to map their folders."
-        )
-        tk.Label(
-            user_card, text=desc, bg=self.palette["glass_card"], fg=self.palette["text_muted"],
-            font=("Segoe UI", 9), justify="left",
-        ).pack(anchor="w", pady=(0, 10))
+        tk.Label(user_card, text="Create a login name and password for each person who will access the server.\nIf you already made accounts, you can skip to Step 2.", bg=self.palette["glass_card"], fg=self.palette["text_muted"], font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 10))
 
         ugrid = tk.Frame(user_card, bg=self.palette["glass_card"])
         ugrid.pack(fill="x", pady=4)
-
-        tk.Label(ugrid, text="Username", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w")
+        tk.Label(ugrid, text="New Username", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w")
         _, self.ent_v_user = self.create_glass_entry(ugrid, width=22)
         self.ent_v_user.master.grid(row=1, column=0, sticky="w", padx=(0, 12), pady=4)
 
-        tk.Label(ugrid, text="Password", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9, "bold")).grid(row=0, column=1, sticky="w")
+        tk.Label(ugrid, text="New Password", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9, "bold")).grid(row=0, column=1, sticky="w")
         _, self.ent_v_pass = self.create_glass_entry(ugrid, width=22, show="*")
         self.ent_v_pass.master.grid(row=1, column=1, sticky="w", padx=(0, 12), pady=4)
 
         btn_row = tk.Frame(ugrid, bg=self.palette["glass_card"])
         btn_row.grid(row=1, column=2, sticky="e", pady=4)
+        FrostedGlassButton(btn_row, text="+ Add User (Stay Here)", command=self.create_user_only, width=180, height=34, radius=16, color_scheme="neutral").pack(side="left", padx=(0, 8))
+        FrostedGlassButton(btn_row, text="+ Add & Continue to Step 2", command=self.create_user_and_advance, width=220, height=34, radius=16, color_scheme="accent").pack(side="left")
 
-        FrostedGlassButton(
-            btn_row, text="+ Add User (Stay Here)", command=self.create_user_only,
-            width=180, height=34, radius=16, color_scheme="neutral"
-        ).pack(side="left", padx=(0, 8))
-
-        FrostedGlassButton(
-            btn_row, text="+ Add & Next →", command=self.create_user_and_advance,
-            width=160, height=34, radius=16, color_scheme="accent"
-        ).pack(side="left")
-
-        det_rim, det_card = self.create_glass_card(self.view_step1, title="Currently Detected Local Accounts")
+        det_rim, det_card = self.create_glass_card(self.view_step1, title="Currently Active Accounts on this PC")
         det_rim.pack(fill="both", expand=True, pady=6)
-
-        self.lbl_user_summary = tk.Label(
-            det_card, text="Scanning system accounts...", bg=self.palette["glass_card"],
-            fg=self.palette["text_frost"], font=("Consolas", 9), justify="left",
-        )
+        self.lbl_user_summary = tk.Label(det_card, text="Scanning for accounts...", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Consolas", 9), justify="left")
         self.lbl_user_summary.pack(anchor="w", pady=4)
-
-        FrostedGlassButton(
-            det_card, text="Skip to Permissions →", command=lambda: self.switch_vertical_tab(2),
-            width=180, height=32, radius=16, color_scheme="neutral",
-        ).pack(anchor="w", pady=6)
+        FrostedGlassButton(det_card, text="Skip to Step 2 →", command=lambda: self.switch_vertical_tab(2), width=180, height=32, radius=16, color_scheme="neutral").pack(anchor="w", pady=6)
 
     def build_vview_step2(self):
-        root_rim, root_card = self.create_glass_card(self.view_step2, title="Step 2: NAS Root Directory")
+        root_rim, root_card = self.create_glass_card(self.view_step2, title="Step 2: Choose Main Server Folder")
         root_rim.pack(fill="x", pady=4)
-
         rgrid = tk.Frame(root_card, bg=self.palette["glass_card"])
         rgrid.pack(fill="x")
-
-        tk.Label(rgrid, text="Select NAS Root Path (e.g., D:\\MainNAS)", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w")
-
+        tk.Label(rgrid, text="Select the main hard drive folder where all files will live (e.g., D:\\EasyNAS)", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w")
         path_box = tk.Frame(rgrid, bg=self.palette["glass_card"])
         path_box.grid(row=1, column=0, sticky="ew", pady=4)
-
         _, self.ent_nas_root = self.create_glass_entry(path_box, width=54)
         self.ent_nas_root.master.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        FrostedGlassButton(path_box, text="Browse...", command=self.browse_nas_root, width=100, height=32, radius=14, color_scheme="neutral").pack(side="right")
 
-        FrostedGlassButton(
-            path_box, text="Browse...", command=self.browse_nas_root,
-            width=100, height=32, radius=14, color_scheme="neutral",
-        ).pack(side="right")
-
-        tmpl_rim, tmpl_card = self.create_glass_card(self.view_step2, title="Step 3: Directory Structure Template")
+        tmpl_rim, tmpl_card = self.create_glass_card(self.view_step2, title="Step 3: Auto-Build Folder Layout")
         tmpl_rim.pack(fill="x", pady=4)
-
         self.var_struct_mode = tk.StringVar(value="scan")
-
         tbox = tk.Frame(tmpl_card, bg=self.palette["glass_card"])
         tbox.pack(fill="x", pady=2)
-
-        ttk.Radiobutton(tbox, text="Use Existing (Scan for folders)", variable=self.var_struct_mode, value="scan", style="Glass.TRadiobutton").pack(anchor="w", pady=2)
-        ttk.Radiobutton(tbox, text="<Multi-User, Private, No Sharing>  Root\\Users\\[Usernames]", variable=self.var_struct_mode, value="multi_private", style="Glass.TRadiobutton").pack(anchor="w", pady=2)
-        ttk.Radiobutton(tbox, text="<Multi-User, Private & Sharing>  Root\\Shared  +  Root\\Users\\[Usernames]", variable=self.var_struct_mode, value="multi_shared", style="Glass.TRadiobutton").pack(anchor="w", pady=2)
-        ttk.Radiobutton(tbox, text="<Single User>  Root", variable=self.var_struct_mode, value="single_user", style="Glass.TRadiobutton").pack(anchor="w", pady=2)
-
+        ttk.Radiobutton(tbox, text="I already have folders (Scan existing)", variable=self.var_struct_mode, value="scan", style="Glass.TRadiobutton").pack(anchor="w", pady=2)
+        ttk.Radiobutton(tbox, text="Create private folders for each user", variable=self.var_struct_mode, value="multi_private", style="Glass.TRadiobutton").pack(anchor="w", pady=2)
+        ttk.Radiobutton(tbox, text="Create private folders AND one public 'Shared' folder", variable=self.var_struct_mode, value="multi_shared", style="Glass.TRadiobutton").pack(anchor="w", pady=2)
+        
         action_row = tk.Frame(tmpl_card, bg=self.palette["glass_card"])
         action_row.pack(fill="x", pady=(6, 2))
+        FrostedGlassButton(action_row, text="Create / Scan Folders", command=self.apply_structure_template, width=200, height=34, radius=16, color_scheme="accent").pack(side="left", padx=(0, 10))
 
-        FrostedGlassButton(
-            action_row, text="Auto-Create / Populate Structure", command=self.apply_structure_template,
-            width=260, height=34, radius=16, color_scheme="accent",
-        ).pack(side="left", padx=(0, 10))
-
-        matrix_rim, matrix_card = self.create_glass_card(self.view_step2, title="Step 4: User Access Matrix & Access-Based Enumeration")
+        matrix_rim, matrix_card = self.create_glass_card(self.view_step2, title="Step 4: Lock Folders & Set Permissions")
         matrix_rim.pack(fill="both", expand=True, pady=4)
-
         matrix_split = tk.Frame(matrix_card, bg=self.palette["glass_card"])
         matrix_split.pack(fill="both", expand=True, pady=2)
-
         left_user_box = tk.Frame(matrix_split, bg=self.palette["glass_card"], width=200)
         left_user_box.pack(side="left", fill="y", padx=(0, 10))
-
-        tk.Label(left_user_box, text="Select User:", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
-
-        self.user_listbox = tk.Listbox(
-            left_user_box,
-            bg=self.palette["well_bg"], fg=self.palette["text_bright"],
-            selectbackground="#32353b", selectforeground="#ffffff",
-            highlightthickness=1, highlightbackground=self.palette["well_border"],
-            relief="flat", font=("Segoe UI", 10), height=7,
-            exportselection=False
-        )
+        tk.Label(left_user_box, text="1. Select a User:", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        self.user_listbox = tk.Listbox(left_user_box, bg=self.palette["well_bg"], fg=self.palette["text_bright"], selectbackground="#32353b", selectforeground="#ffffff", highlightthickness=1, highlightbackground=self.palette["well_border"], relief="flat", font=("Segoe UI", 10), height=7, exportselection=False)
         self.user_listbox.pack(fill="both", expand=True, pady=4)
         self.user_listbox.bind("<<ListboxSelect>>", self.on_user_selection_changed)
 
         right_perm_box = tk.Frame(matrix_split, bg=self.palette["glass_card"])
         right_perm_box.pack(side="right", fill="both", expand=True)
-
-        self.lbl_perm_header = tk.Label(
-            right_perm_box, text="Subfolder Access for Selected User:", bg=self.palette["glass_card"],
-            fg=self.palette["text_glow"], font=("Segoe UI", 9, "bold"),
-        )
+        self.lbl_perm_header = tk.Label(right_perm_box, text="2. Check what they are allowed to see/do:", bg=self.palette["glass_card"], fg=self.palette["text_glow"], font=("Segoe UI", 9, "bold"))
         self.lbl_perm_header.pack(anchor="w")
 
         scroll_container = tk.Frame(right_perm_box, bg=self.palette["glass_card"])
         scroll_container.pack(fill="both", expand=True, pady=4)
-
-        self.folder_scroll_canvas = tk.Canvas(
-            scroll_container, bg=self.palette["well_bg"], highlightthickness=1,
-            highlightbackground=self.palette["well_border"], height=130,
-        )
-        
+        self.folder_scroll_canvas = tk.Canvas(scroll_container, bg=self.palette["well_bg"], highlightthickness=1, highlightbackground=self.palette["well_border"], height=130)
         scrollbar = ttk.Scrollbar(scroll_container, orient="vertical", command=self.folder_scroll_canvas.yview, style="Vertical.TScrollbar")
         self.folder_scroll_canvas.configure(yscrollcommand=scrollbar.set)
-        
         scrollbar.pack(side="right", fill="y")
         self.folder_scroll_canvas.pack(side="left", fill="both", expand=True)
-
         self.folder_inner_frame = tk.Frame(self.folder_scroll_canvas, bg=self.palette["well_bg"])
         self.canvas_frame = self.folder_scroll_canvas.create_window((0, 0), window=self.folder_inner_frame, anchor="nw")
 
-        def on_inner_configure(e):
-            self.folder_scroll_canvas.configure(scrollregion=self.folder_scroll_canvas.bbox("all"))
-            
-        def on_canvas_configure(e):
-            self.folder_scroll_canvas.itemconfig(self.canvas_frame, width=e.width)
-
+        def on_inner_configure(e): self.folder_scroll_canvas.configure(scrollregion=self.folder_scroll_canvas.bbox("all"))
+        def on_canvas_configure(e): self.folder_scroll_canvas.itemconfig(self.canvas_frame, width=e.width)
         self.folder_inner_frame.bind("<Configure>", on_inner_configure)
         self.folder_scroll_canvas.bind("<Configure>", on_canvas_configure)
-        
-        def _on_mousewheel(event):
-            self.folder_scroll_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        def _bind_mousewheel(event):
-            self.folder_scroll_canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        def _unbind_mousewheel(event):
-            self.folder_scroll_canvas.unbind_all("<MouseWheel>")
-            
-        scroll_container.bind("<Enter>", _bind_mousewheel)
-        scroll_container.bind("<Leave>", _unbind_mousewheel)
+        def _on_mousewheel(event): self.folder_scroll_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        scroll_container.bind("<Enter>", lambda e: self.folder_scroll_canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        scroll_container.bind("<Leave>", lambda e: self.folder_scroll_canvas.unbind_all("<MouseWheel>"))
 
         apply_bar = tk.Frame(matrix_card, bg=self.palette["glass_card"])
         apply_bar.pack(fill="x", pady=(6, 2))
-
-        FrostedGlassButton(
-            apply_bar, text="⚡ Apply Invisible ABE Locks & Publish Master Share", command=self.apply_all_configured_permissions,
-            width=360, height=38, radius=18, color_scheme="accent",
-        ).pack(side="left", padx=(0, 10))
+        FrostedGlassButton(apply_bar, text="⚡ Apply Security Locks & Publish Network Share", command=self.apply_all_configured_permissions, width=360, height=38, radius=18, color_scheme="accent").pack(side="left", padx=(0, 10))
 
     def build_vview_step3(self):
-        dom_rim, dom_card = self.create_glass_card(self.view_step3, title="Step 5: Friendly Hostname & Domain Mapping")
+        dom_rim, dom_card = self.create_glass_card(self.view_step3, title="Step 5: Memorable Server Name")
         dom_rim.pack(fill="both", expand=True, pady=4)
-
-        desc = (
-            "Network SMB shares are mapped via hostnames or IP addresses (e.g., \\\\100.x.y.z\\Share).\n"
-            "Here you can configure a memorable friendly name for local devices or over Tailscale."
-        )
-        tk.Label(
-            dom_card, text=desc, bg=self.palette["glass_card"], fg=self.palette["text_muted"],
-            font=("Segoe UI", 9), justify="left",
-        ).pack(anchor="w", pady=(0, 12))
+        tk.Label(dom_card, text="Instead of forcing users to type in a random IP address like '100.x.x.x',\nyou can create a friendly name that all computers will understand.", bg=self.palette["glass_card"], fg=self.palette["text_muted"], font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 12))
 
         info_box = tk.Frame(dom_card, bg=self.palette["well_bg"], padx=12, pady=10)
         info_box.pack(fill="x", pady=4)
-
-        curr_hostname = socket.gethostname()
-        local_ip = "127.0.0.1"
+        curr_hostname, local_ip = socket.gethostname(), "127.0.0.1"
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             local_ip = s.getsockname()[0]
             s.close()
-        except Exception:
-            pass
+        except Exception: pass
 
-        self.lbl_host_info = tk.Label(
-            info_box,
-            text=f"Local Computer Name: {curr_hostname}\nLocal LAN IP Address: {local_ip}\nStandard SMB Path: \\\\{curr_hostname}\\<ShareName>",
-            bg=self.palette["well_bg"], fg=self.palette["text_frost"],
-            font=("Consolas", 9), justify="left",
-        )
-        self.lbl_host_info.pack(anchor="w")
+        tk.Label(info_box, text=f"Windows PC Name: {curr_hostname}\nLocal Router IP: {local_ip}\nCurrent Folder Address: \\\\{curr_hostname}\\<ShareName>", bg=self.palette["well_bg"], fg=self.palette["text_frost"], font=("Consolas", 9), justify="left").pack(anchor="w")
 
         alias_rim = tk.Frame(dom_card, bg=self.palette["glass_card"])
         alias_rim.pack(fill="x", pady=10)
-
-        tk.Label(
-            alias_rim, text="Friendly Alias for this PC (e.g., FamilyNAS or local.familynas):",
-            bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9, "bold"),
-        ).pack(anchor="w", pady=2)
-
+        tk.Label(alias_rim, text="Type a new friendly name for this PC (e.g., EasyNAS):", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=2)
         abox = tk.Frame(alias_rim, bg=self.palette["glass_card"])
         abox.pack(fill="x", pady=4)
-
         _, self.ent_domain_alias = self.create_glass_entry(abox, width=32)
-        self.ent_domain_alias.insert(0, "FamilyNAS")
+        self.ent_domain_alias.insert(0, "EasyNAS")
         self.ent_domain_alias.master.pack(side="left", padx=(0, 10))
-
-        FrostedGlassButton(
-            abox, text="Apply Alias to hosts", command=self.apply_hosts_alias,
-            width=180, height=34, radius=16, color_scheme="accent",
-        ).pack(side="left")
+        FrostedGlassButton(abox, text="Save Friendly Name", command=self.apply_hosts_alias, width=180, height=34, radius=16, color_scheme="accent").pack(side="left")
 
         magic_box = tk.Frame(dom_card, bg=self.palette["glass_card"])
         magic_box.pack(fill="x", pady=(10, 0))
-
-        magic_note = (
-            "✦ TAILSCALE MAGICDNS FOR REMOTE PHONES:\n"
-            "Tailscale includes built-in 'MagicDNS'. When MagicDNS is active in your Tailscale admin console,\n"
-            "all family members can connect to this NAS using just the device name:\n\n"
-            f"   • iOS Files App:     smb://{curr_hostname.lower()}\n"
-            f"   • Android Cx Explorer:  Host: {curr_hostname.lower()}\n\n"
-            "No manual IP addresses or DNS editing required on their phones!"
-        )
-        tk.Label(
-            magic_box, text=magic_note, bg=self.palette["glass_card"], fg=self.palette["text_muted"],
-            font=("Consolas", 9), justify="left",
-        ).pack(anchor="w")
+        magic_note = ("✦ REMOTE ACCESS NOTE:\n"
+                      "If you are using Tailscale for remote phone access, clients can type the computer name\n"
+                      "directly into their device thanks to Tailscale MagicDNS:\n\n"
+                      f"   • iPhone/iPad (Files App):     smb://{curr_hostname.lower()}\n"
+                      f"   • Android (Cx File Explorer):  Host: {curr_hostname.lower()}")
+        tk.Label(magic_box, text=magic_note, bg=self.palette["glass_card"], fg=self.palette["text_muted"], font=("Consolas", 9), justify="left").pack(anchor="w")
 
     def build_tailscale_tab(self):
         panel = tk.Frame(self.tab_tailscale, bg=self.palette["bg_tint"])
         panel.pack(fill="both", expand=True, pady=6)
 
-        card_rim, card = self.create_glass_card(panel, title="Encrypted Mesh Bridge & Server Authentication")
+        card_rim, card = self.create_glass_card(panel, title="Install Remote Access (No Router Config Needed)")
         card_rim.pack(fill="x", pady=(0, 6))
-
-        tk.Label(
-            card,
-            text="Tailscale is a zero-configuration VPN. It creates an encrypted, peer-to-peer mesh network\n"
-                 "that allows your devices to access this SMB server remotely from anywhere in the world.\n"
-                 "It requires zero router configuration and completely bypasses CGNAT and port-forwarding.",
-            bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9), justify="left",
-        ).pack(anchor="w", pady=(0, 10))
+        tk.Label(card, text="Tailscale safely connects devices to this server from anywhere in the world using an encrypted tunnel.\nIt bypasses your router settings automatically so you don't have to deal with port-forwarding.", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 10))
 
         btn_row = tk.Frame(card, bg=self.palette["glass_card"])
         btn_row.pack(fill="x", pady=4)
-
-        FrostedGlassButton(
-            btn_row, text="Install Tailscale Engine", command=self.install_tailscale,
-            width=200, height=36, radius=18, color_scheme="neutral",
-        ).pack(side="left", padx=(0, 12))
+        FrostedGlassButton(btn_row, text="1. Download & Install Tailscale", command=self.install_tailscale, width=220, height=36, radius=18, color_scheme="neutral").pack(side="left", padx=(0, 12))
 
         def open_tailscale_console():
             ts_path = r"C:\Program Files\Tailscale\tailscale.exe"
@@ -706,81 +391,58 @@ class GlassSMBManagerApp:
             else:
                 self.set_status("Tailscale not found. Please install it first.", "error")
 
-        FrostedGlassButton(
-            btn_row, text="Open Tailscale Console", command=open_tailscale_console,
-            width=240, height=36, radius=18, color_scheme="accent",
-        ).pack(side="left")
+        FrostedGlassButton(btn_row, text="2. Open Tailscale Login/Dashboard", command=open_tailscale_console, width=260, height=36, radius=18, color_scheme="accent").pack(side="left")
 
-        guide_rim, guide_frame = self.create_glass_card(panel, title="Comprehensive Setup & Client Connection Guide")
+        guide_rim, guide_frame = self.create_glass_card(panel, title="Step-by-Step Connection Guide")
         guide_rim.pack(fill="both", expand=True, pady=(6, 0))
-
-        txt = tk.Text(
-            guide_frame, bg=self.palette["well_bg"], fg=self.palette["text_frost"],
-            font=("Consolas", 9), wrap="word", relief="flat", padx=12, pady=12
-        )
-        
+        txt = tk.Text(guide_frame, bg=self.palette["well_bg"], fg=self.palette["text_frost"], font=("Consolas", 9), wrap="word", relief="flat", padx=12, pady=12)
         scroll = ttk.Scrollbar(guide_frame, orient="vertical", command=txt.yview, style="Vertical.TScrollbar")
         txt.configure(yscrollcommand=scroll.set)
-        
         scroll.pack(side="right", fill="y")
         txt.pack(side="left", fill="both", expand=True)
 
         guide_content = """TAILSCALE COMPREHENSIVE SETUP GUIDE
 
-PHASE 1: INSTALLATION & FIRST BOOT
-1. Click 'Install Tailscale Engine' above. Wait for the 'Success' notification at the bottom of the window.
+PHASE 1: INSTALLATION
+1. Click '1. Download & Install Tailscale' above. Wait for the 'Success' notification.
 2. Go to tailscale.com in your web browser and create a free account.
-3. Come back here and click 'Open Tailscale Console'. This will link your computer and open the Tailscale dashboard so you can configure it.
+3. Come back here and click '2. Open Tailscale Login/Dashboard' to link this PC.
 
-PHASE 2: UNATTENDED MODE & TAGS (DEDICATED SERVER SETUP)
-Normally, Tailscale only runs when a user is logged into the PC. For a dedicated NAS/server, you want it to run as a background service so it connects instantly on boot, even before you log in.
-1. Look at your Windows System Tray (bottom right corner of your screen, near the clock - you may need to click the ^ arrow to show hidden icons). 
+PHASE 2: SERVER SETUP (Run Unattended & Tags)
+Normally, Tailscale turns off when you log out of Windows. For a server, you want it to run constantly in the background.
+1. Look at your Windows System Tray (bottom right corner, near the clock). 
 2. Right-click the Tailscale icon -> Preferences -> check "Run Unattended".
-3. Tailscale will warn you about "Tags". Because this machine is now a server, you should "Tag" it so its authentication doesn't expire.
-   • Open the Tailscale Admin Console (login.tailscale.com) -> go to the 'Access Controls' tab.
-   • Click 'Definitions' -> then the 'Tags' tab at the top.
-   • Click '+ Create Tag'.
-   • Tag Name: type 'server' (it will become tag:server).
-   • Tag Owner: type your Tailscale account email, then click 'Save'.
-   • Now go to the 'Machines' tab on the left menu.
-   • Click the (...) menu next to this NAS PC -> Edit ACL tags -> check 'tag:server'.
+3. Tailscale will warn you about "Tags". 
+   • Open the Tailscale Admin Console (login.tailscale.com) -> 'Access Controls' tab.
+   • Click 'Definitions' -> 'Tags' tab -> '+ Create Tag'.
+   • Tag Name: 'server'. Tag Owner: your Tailscale email. Save.
+   • Go to the 'Machines' tab. Click (...) next to this NAS -> Edit ACL tags -> check 'tag:server'.
 
-PHASE 3: DASHBOARD CONFIGURATION (MagicDNS & Expiry)
-1. In the Tailscale Admin Console (login.tailscale.com), go to the Machines tab.
-2. Click the (...) menu next to this NAS PC and select "Disable Key Expiry". (This ensures your server doesn't randomly disconnect after 180 days).
-3. Go to the DNS tab on the left menu.
-4. Toggle MagicDNS ON. This lets devices connect using the computer's name (e.g., FamilyNAS) instead of a random IP address.
+PHASE 3: FIXING DISCONNECTS (MagicDNS & Expiry)
+1. Machines tab: Click (...) next to NAS -> "Disable Key Expiry". 
+2. DNS tab: Toggle MagicDNS ON.
 
-PHASE 4: CONNECTING FAMILY DEVICES
-Each device must have the Tailscale app installed and logged in to the SAME account you used for the server.
+PHASE 4: CONNECTING CLIENT DEVICES
+You must install Tailscale on any device connecting to this server. Devices must either be logged into the same admin account, or you must invite their accounts to your Tailscale network via the dashboard.
 
-▶ Windows PCs & Laptops
-   1. Install Tailscale and log in.
-   2. Open File Explorer. In the top address bar, type: \\\\FamilyNAS (or your PC's name) and press Enter.
-   3. Open the single Master Share folder you see on screen.
-   4. Enter the local Windows Username and Password you created for them in Step 1.
-   5. Thanks to Access-Based Enumeration, they will magically ONLY see folders they have permission for!
+▶ Windows PCs & Laptops (Read carefully: Windows hides this feature!)
+   1. Install Tailscale and log in. 
+   2. Press the Windows Key + R on your keyboard to open the 'Run' window. (You do NOT need to dig into Windows Network settings or toggle any VPN switches).
+   3. Type: \\\\EasyNAS (Or whatever you named the server. Do NOT use "smb://" like on phones. Use the two backslashes).
+   4. Press Enter. Enter the local Windows Username and Password created in Step 1.
+   5. Open the main folder. Security will magically hide folders they shouldn't see!
 
-▶ Apple iPhone & iPad (Native Support)
-   1. Install Tailscale from the App Store, log in, and ensure the VPN is Active.
-   2. Open the native Apple 'Files' app.
-   3. Tap 'Browse' at the bottom, then the (...) menu in the top right.
-   4. Select 'Connect to Server'.
-   5. Enter: smb://FamilyNAS
-      (Note: If Apple struggles to resolve the short name over cellular and says 'Socket Not Connected', go back to the Tailscale Machines page, copy the long Machine Name, and use the FQDN instead: e.g., smb://familynas.yak-bebop.ts.net)
-   6. Select 'Registered User' and enter their Windows credentials.
+▶ Apple iPhone & iPad
+   1. Install Tailscale from the App Store, log in, and ensure VPN is Active.
+   2. Open 'Files' app -> 'Browse' -> (...) menu -> 'Connect to Server'.
+   3. Enter: smb://EasyNAS (If it says Socket Not Connected over cellular, use the long FQDN from the dashboard: e.g., smb://easynas.yak-bebop.ts.net)
+   4. Select 'Registered User' and enter their Windows Username/Password.
 
-▶ Android Phones & Tablets (Cx File Explorer)
-   Android does not have native SMB support. You must use a trusted 3rd-party file manager.
+▶ Android Phones & Tablets
    1. Install Tailscale from Google Play, log in, and connect.
-   2. Install 'Cx File Explorer' from Google Play (recommended, no ads, great UI).
+   2. Install 'Cx File Explorer' from Google Play.
    3. Open Cx File Explorer -> Network tab -> [+] New Location -> Remote -> SMB.
-   4. Host: FamilyNAS
-   5. Port: (Leave blank)
-   6. Username & Password: Enter their specific credentials.
-   7. Check "Display password" to verify, then tap OK.
-   8. Tap the newly created shortcut. It will open the master share, hiding any folders they don't have access to."""
-        
+   4. Host: EasyNAS (Leave port blank). Enter credentials. Tap OK."""
         txt.insert("1.0", guide_content)
         txt.config(state="disabled")
 
@@ -788,179 +450,195 @@ Each device must have the Tailscale app installed and logged in to the SAME acco
         panel = tk.Frame(self.tab_snapraid, bg=self.palette["bg_tint"])
         panel.pack(fill="both", expand=True, pady=6)
 
-        card_rim, card = self.create_glass_card(panel, title="SnapRAID Parity Architecture")
+        card_rim, card = self.create_glass_card(panel, title="Hard Drive Parity Backup (SnapRAID)")
         card_rim.pack(fill="x", pady=(0, 6))
 
-        tk.Label(
-            card,
-            text="SnapRAID is a powerful software parity tool. It acts as a safety net, allowing you to pool\n"
-                 "independent hard drives of different sizes and protect them against drive failure.\n"
-                 "Unlike hardware RAID, it does not lock your drives or stripe your data.",
-            bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9), justify="left",
-        ).pack(anchor="w", pady=(0, 10))
+        tk.Label(card, text="SnapRAID calculates backup math across independent hard drives to protect against disk failure.\nUse this dashboard to run manual health checks or schedule automatic background protection.", bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 8))
 
-        FrostedGlassButton(
-            card, text="Install SnapRAID (via Winget)", command=self.install_snapraid,
-            width=220, height=36, radius=18, color_scheme="neutral",
-        ).pack(anchor="w", pady=4)
+        btn_grid = tk.Frame(card, bg=self.palette["glass_card"])
+        btn_grid.pack(fill="x", pady=4)
 
-        guide_rim, guide_frame = self.create_glass_card(panel, title="Comprehensive Parity Setup Guide")
-        guide_rim.pack(fill="both", expand=True, pady=(6, 0))
-
-        txt = tk.Text(
-            guide_frame, bg=self.palette["well_bg"], fg=self.palette["text_frost"],
-            font=("Consolas", 9), wrap="word", relief="flat", padx=12, pady=12
-        )
+        FrostedGlassButton(btn_grid, text="1. Install SnapRAID", command=self.install_snapraid, width=180, height=36, radius=16, color_scheme="neutral").grid(row=0, column=0, padx=(0, 8), pady=4)
+        FrostedGlassButton(btn_grid, text="2. Update Parity Backup (Sync)", command=self.snapraid_sync, width=220, height=36, radius=16, color_scheme="accent").grid(row=0, column=1, padx=8, pady=4)
+        FrostedGlassButton(btn_grid, text="3. Automate Nightly Backups", command=self.schedule_snapraid_tasks, width=220, height=36, radius=16, color_scheme="nav_active").grid(row=0, column=2, padx=8, pady=4)
         
+        FrostedGlassButton(btn_grid, text="Check File Health (Status)", command=self.snapraid_status, width=180, height=36, radius=16, color_scheme="nav").grid(row=1, column=0, padx=(0, 8), pady=4)
+        FrostedGlassButton(btn_grid, text="Check Hard Drive Health (SMART)", command=self.snapraid_smart, width=220, height=36, radius=16, color_scheme="nav").grid(row=1, column=1, padx=8, pady=4)
+        FrostedGlassButton(btn_grid, text="Recover Lost Data (Fix)", command=self.snapraid_fix, width=220, height=36, radius=16, color_scheme="danger").grid(row=1, column=2, padx=8, pady=4)
+
+        guide_rim, guide_frame = self.create_glass_card(panel, title="How to Setup Parity Protection")
+        guide_rim.pack(fill="both", expand=True, pady=(6, 0))
+        txt = tk.Text(guide_frame, bg=self.palette["well_bg"], fg=self.palette["text_frost"], font=("Consolas", 9), wrap="word", relief="flat", padx=12, pady=12)
         scroll = ttk.Scrollbar(guide_frame, orient="vertical", command=txt.yview, style="Vertical.TScrollbar")
         txt.configure(yscrollcommand=scroll.set)
-        
         scroll.pack(side="right", fill="y")
         txt.pack(side="left", fill="both", expand=True)
 
         guide_content = """SNAPRAID COMPREHENSIVE SETUP GUIDE
 
-SnapRAID is a backup program for disk arrays. It stores parity data to rescue your files if a hard drive fails. Unlike standard RAID, SnapRAID does not lock your hard drives together. If your whole PC explodes, you can pull a hard drive out, plug it into any Windows laptop, and read your files perfectly.
-
 PHASE 1: THE GOLDEN RULE OF PARITY
-1. You must dedicate at least one hard drive strictly for Parity (Backup Math). 
+1. You must dedicate at least one hard drive strictly for Backup Parity. 
    CRITICAL: Your parity drive MUST be equal to or larger than your largest single data drive.
    (e.g., If you have a 4TB drive and an 8TB drive holding data, your Parity drive MUST be at least 8TB).
 
-PHASE 2: DRIVE PREPARATION
-1. Install your hard drives into the computer.
-2. Open Windows "Disk Management". 
-3. Initialize and format your drives as NTFS. 
-4. Assign them clear, memorable drive letters (e.g., P: for Parity, D: for Data 1, E: for Data 2).
-
-PHASE 3: WRITING THE CONFIG FILE
-1. Click the "Install SnapRAID" button above. Wait for the Success notification.
-2. Open Windows File Explorer and navigate to C:\\SnapRAID\\.
-3. Create a new text file named: snapraid.conf
-4. Open it in Notepad and define your disks exactly like this example:
+PHASE 2: DRIVE PREPARATION & CONFIGURATION
+1. Install drives, open Windows "Disk Management", format as NTFS, and assign clear letters (e.g., P: for Parity, D1: for Data).
+2. Click "1. Install SnapRAID" above.
+3. Open C:\\SnapRAID\\. Create a text file named: snapraid.conf
+4. Define your disks exactly like this example:
    
    parity P:\\snapraid.parity
    content P:\\snapraid.content
    content C:\\SnapRAID\\snapraid.content
-   content D:\\snapraid.content
-   data d1 D:\\FamilyNAS
-   data d2 E:\\FamilyNAS
-   
-   (Note: 'content' files are tiny index files. Keep multiple copies across different drives as shown above so SnapRAID always knows where your files were).
+   content D1:\\snapraid.content
+   data d1 D1:\\EasyNAS
+   data d2 D2:\\EasyNAS
 
-PHASE 4: THE FIRST SYNC
-1. Open Windows Command Prompt as Administrator.
-2. Type: cd C:\\SnapRAID
-3. Type: snapraid sync
-4. This first sync will take a long time depending on how much data you have. It calculates the parity blocks across all your drives. Let it run overnight.
+PHASE 3: INITIALIZATION & AUTOMATION
+1. Click "2. Update Parity Backup" in the dashboard above. This calculates initial parity. Let it run overnight.
+2. Click "3. Automate Nightly Backups". This tells Windows to automatically run a Sync daily at 2:00 AM and a Scrub (fixing bit-rot) every Sunday at 4:00 AM.
 
-PHASE 5: AUTOMATING THE BACKUP
-To keep your safety net updated, use the Windows Task Scheduler to run these commands in the background:
-• snapraid sync (Run Daily at 2 AM): Updates the parity with any new or modified files.
-• snapraid scrub (Run Weekly): Checks the disks for silent data corruption (bit rot) and fixes it.
-
-PHASE 6: HOW TO RESTORE LOST DATA
-If a drive dies or you accidentally delete a file, do not panic.
-• Undelete a file: Open Command prompt and run: snapraid fix -f "FileName.ext"
-• Restore a dead drive: Physically replace the dead drive with a new one. Open your snapraid.conf file and update the drive letter to match the new drive. Then run: snapraid fix -d d1"""
-        
+PHASE 4: DISASTER RECOVERY
+If a drive dies or you accidentally delete a file:
+• Click "Check File Health" above to see what files SnapRAID noticed are missing.
+• To recover everything missing: Click "Recover Lost Data (Fix)" in the dashboard above."""
         txt.insert("1.0", guide_content)
         txt.config(state="disabled")
 
     # =========================================================================
-    # REVISED STATUS BAR
+    # SNAPRAID COMMAND HANDLERS
+    # =========================================================================
+    def run_snapraid_cmd(self, cmd_arg, title):
+        exe_path = r"C:\SnapRAID\snapraid.exe"
+        if not os.path.exists(exe_path):
+            exe_path = "snapraid"
+            
+        self.set_status(f"Running SnapRAID {cmd_arg}...", "info")
+        def process():
+            try:
+                self.current_process = subprocess.Popen(
+                    [exe_path, cmd_arg], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                stdout, _ = self.current_process.communicate()
+                rc = self.current_process.returncode
+                
+                if rc == 0:
+                    self.set_status(f"Success! SnapRAID {cmd_arg} completed.", "success", raw_output=stdout, title=f"SnapRAID {title}")
+                else:
+                    self.set_status(f"SnapRAID {cmd_arg} finished with warnings/errors. (Click for details)", "error", raw_output=stdout, title=f"SnapRAID {title}")
+            except Exception as e:
+                self.set_status(f"Failed to execute SnapRAID {cmd_arg}.", "error", raw_output=str(e), title="Execution Error")
+            finally:
+                self.current_process = None
+                self.is_processing = False
+
+        self.is_processing = True
+        threading.Thread(target=process, daemon=True).start()
+
+    def snapraid_sync(self):
+        if getattr(self, "is_processing", False): return
+        self.run_snapraid_cmd("sync", "Parity Sync")
+
+    def snapraid_status(self):
+        if getattr(self, "is_processing", False): return
+        self.run_snapraid_cmd("status", "Array Status")
+
+    def snapraid_smart(self):
+        if getattr(self, "is_processing", False): return
+        self.run_snapraid_cmd("smart", "SMART Hardware Health")
+
+    def snapraid_fix(self):
+        if getattr(self, "is_processing", False): return
+        confirm = messagebox.askyesno("Confirm Disaster Recovery", "WARNING: You are about to initiate a drive fix/rebuild.\n\nSnapRAID will attempt to reconstruct any missing or corrupted files based on your parity data.\n\nAre you sure you want to proceed?")
+        if confirm:
+            self.run_snapraid_cmd("fix", "Disaster Recovery (Fix)")
+
+    def schedule_snapraid_tasks(self):
+        self.set_status("Configuring elevated Task Scheduler routines...", "info")
+        exe_path = r"C:\SnapRAID\snapraid.exe"
+        
+        def process():
+            try:
+                sync_cmd = ['schtasks', '/create', '/tn', 'SnapRAID_Daily_Sync', '/tr', f'{exe_path} sync', '/sc', 'daily', '/st', '02:00', '/rl', 'highest', '/f']
+                subprocess.run(sync_cmd, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                scrub_cmd = ['schtasks', '/create', '/tn', 'SnapRAID_Weekly_Scrub', '/tr', f'{exe_path} scrub', '/sc', 'weekly', '/d', 'SUN', '/st', '04:00', '/rl', 'highest', '/f']
+                subprocess.run(scrub_cmd, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                self.set_status("Success! Auto Sync & Scrub scheduled via Windows Tasks.", "success")
+            except Exception as e:
+                self.set_status("Error scheduling tasks. (Click for details)", "error", raw_output=str(e), title="Task Scheduler Error")
+                
+        threading.Thread(target=process, daemon=True).start()
+
+    # =========================================================================
+    # REVISED STATUS BAR & POPUPS
     # =========================================================================
     def build_status_bar(self):
         status_rim = tk.Frame(self.main_container, bg=self.palette["glass_rim_light"], padx=1, pady=1)
         status_rim.pack(fill="x", pady=(4, 8), padx=12)
-        
         status_shadow = tk.Frame(status_rim, bg=self.palette["glass_rim_shadow"], padx=1, pady=1)
         status_shadow.pack(fill="both", expand=True)
-        
         status_card = tk.Frame(status_shadow, bg=self.palette["glass_card"], padx=14, pady=8)
         status_card.pack(fill="both", expand=True)
 
-        self.lbl_status = tk.Label(
-            status_card,
-            text="Ready.",
-            bg=self.palette["glass_card"], fg=self.palette["text_muted"],
-            font=("Segoe UI", 10, "bold")
-        )
+        self.lbl_status = tk.Label(status_card, text="Ready.", bg=self.palette["glass_card"], fg=self.palette["text_muted"], font=("Segoe UI", 10, "bold"))
         self.lbl_status.pack(side="left", fill="x", expand=True, anchor="w")
+        FrostedGlassButton(status_card, text="🛑 Stop current task", command=self.stop_current_operation, width=150, height=34, radius=16, color_scheme="danger").pack(side="right")
 
-        FrostedGlassButton(
-            status_card, text="🛑 Stop", command=self.stop_current_operation,
-            width=100, height=34, radius=16, color_scheme="danger",
-        ).pack(side="right")
-
-    def set_status(self, msg, status_type="info", raw_error=None):
-        """Updates the status bar. Converts logs into a sleek message format."""
-        color_map = {
-            "info": self.palette["text_muted"],
-            "success": self.palette["success"],
-            "error": self.palette["error"],
-        }
-        
+    def set_status(self, msg, status_type="info", raw_output=None, title="Operation Details"):
+        color_map = {"info": self.palette["text_muted"], "success": self.palette["success"], "error": self.palette["error"]}
         self.lbl_status.config(text=msg, fg=color_map.get(status_type, self.palette["text_muted"]))
         
-        if status_type == "error" and raw_error:
-            self.current_error_raw = raw_error
+        if raw_output:
+            self.current_output_raw = raw_output
+            self.current_output_title = title
             self.lbl_status.config(cursor="hand2")
-            self.lbl_status.bind("<Button-1>", lambda e: self.show_error_popup())
+            if status_type == "success":
+                self.lbl_status.config(text=msg + " (Click to view output)", fg=self.palette["info_click"])
+            self.lbl_status.bind("<Button-1>", lambda e: self.show_output_popup(status_type))
         else:
-            self.current_error_raw = ""
+            self.current_output_raw = ""
             self.lbl_status.config(cursor="")
             self.lbl_status.unbind("<Button-1>")
 
     def translate_error(self, err_text):
-        """Attempts to simplify cryptic Windows terminal errors."""
         err_lower = err_text.lower()
-        if "access is denied" in err_lower or "error 5" in err_lower:
-            return "Windows blocked this action. Ensure you have Administrative rights and that the file/folder isn't currently locked by another program."
-        if "already exists" in err_lower:
-            return "The user account or share name you are trying to create already exists."
-        if "no mapping between account names" in err_lower:
-            return "Windows could not find the user account. It may not have been created successfully."
-        if "cannot find path" in err_lower:
-            return "The specified folder path does not exist or was moved."
-        if "winget" in err_lower and "agreements" in err_lower:
-            return "Windows Package Manager requires you to accept terms. Try running the installer manually once via Command Prompt."
-        
-        return "An unexpected system command failure occurred. See the technical details below."
+        if "access is denied" in err_lower or "error 5" in err_lower: return "Windows blocked this action. Ensure you have Administrative rights."
+        if "already exists" in err_lower: return "The user account or share name you are trying to create already exists."
+        if "cannot find path" in err_lower: return "The specified folder path does not exist or was moved."
+        if "winget" in err_lower and "agreements" in err_lower: return "Windows Package Manager requires you to accept terms."
+        return "An unexpected system execution occurred. See the technical details below."
 
-    def show_error_popup(self):
-        """Displays the layman's error and the raw output in a custom window."""
-        if not getattr(self, "current_error_raw", None): return
+    def show_output_popup(self, status_type):
+        if not getattr(self, "current_output_raw", None): return
 
         popup = tk.Toplevel(self.root)
-        popup.title("Error Details")
-        popup.geometry("600x400")
+        popup.title(self.current_output_title)
+        popup.geometry("700x500")
         popup.configure(bg=self.palette["bg_tint"])
         popup.transient(self.root)
         popup.grab_set()
 
-        title_lbl = tk.Label(popup, text="Operation Failed", fg=self.palette["error"], bg=self.palette["bg_tint"], font=("Segoe UI", 12, "bold"))
-        title_lbl.pack(anchor="w", padx=16, pady=(16, 4))
+        header_color = self.palette["error"] if status_type == "error" else self.palette["success"]
+        tk.Label(popup, text=self.current_output_title, fg=header_color, bg=self.palette["bg_tint"], font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
         
-        layman_err = self.translate_error(self.current_error_raw)
-        desc_lbl = tk.Label(popup, text=layman_err, fg=self.palette["text_bright"], bg=self.palette["bg_tint"], font=("Segoe UI", 10), wraplength=560, justify="left")
-        desc_lbl.pack(anchor="w", padx=16, pady=4)
+        if status_type == "error":
+            layman_err = self.translate_error(self.current_output_raw)
+            tk.Label(popup, text=layman_err, fg=self.palette["text_bright"], bg=self.palette["bg_tint"], font=("Segoe UI", 10), wraplength=660, justify="left").pack(anchor="w", padx=16, pady=4)
 
-        tk.Label(popup, text="Raw Command Output:", fg=self.palette["text_muted"], bg=self.palette["bg_tint"], font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        tk.Label(popup, text="Raw Console Output:", fg=self.palette["text_muted"], bg=self.palette["bg_tint"], font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=16, pady=(8, 4))
 
         well_f = tk.Frame(popup, bg=self.palette["well_border"], padx=1, pady=1)
         well_f.pack(fill="both", expand=True, padx=16, pady=(0, 16))
 
-        txt = tk.Text(
-            well_f, bg=self.palette["terminal_bg"], fg=self.palette["text_glow"],
-            relief="flat", font=("Consolas", 9), wrap="word", padx=8, pady=8
-        )
-        txt.insert("1.0", self.current_error_raw)
+        txt = tk.Text(well_f, bg=self.palette["terminal_bg"], fg=self.palette["text_glow"], relief="flat", font=("Consolas", 9), wrap="word", padx=8, pady=8)
+        txt.insert("1.0", self.current_output_raw)
         txt.config(state="disabled")
         
         scroll = ttk.Scrollbar(well_f, orient="vertical", command=txt.yview, style="Vertical.TScrollbar")
         txt.configure(yscrollcommand=scroll.set)
-        
         scroll.pack(side="right", fill="y")
         txt.pack(side="left", fill="both", expand=True)
 
@@ -969,46 +647,32 @@ If a drive dies or you accidentally delete a file, do not panic.
     # =========================================================================
     def run_cmd(self, command_list, success_msg=""):
         try:
-            self.current_process = subprocess.Popen(
-                command_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, creationflags=subprocess.CREATE_NO_WINDOW,
-            )
+            self.current_process = subprocess.Popen(command_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             stdout, stderr = self.current_process.communicate()
-            rc = self.current_process.returncode
-
-            if rc == 0:
-                if success_msg:
-                    self.set_status(success_msg, "success")
+            if self.current_process.returncode == 0:
+                self.set_status(success_msg, "success")
                 return True
             else:
-                raw = stderr.strip() or stdout.strip()
-                self.set_status("Error Occurred! (Click for details)", "error", raw)
+                self.set_status("Error Occurred! (Click for details)", "error", raw_output=stderr.strip() or stdout.strip(), title="Command Failed")
                 return False
         except Exception as e:
-            self.set_status("Error Occurred! (Click for details)", "error", str(e))
+            self.set_status("Error Occurred! (Click for details)", "error", raw_output=str(e), title="Execution Error")
             return False
         finally:
             self.current_process = None
 
     def run_quiet_cmd(self, cmd, use_shell=False):
-        """Runs command silently. Aborts and updates status on failure."""
-        if not self.is_processing:
-            return False
+        if not self.is_processing: return False
         try:
-            self.current_process = subprocess.Popen(
-                cmd, shell=use_shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, creationflags=subprocess.CREATE_NO_WINDOW
-            )
+            self.current_process = subprocess.Popen(cmd, shell=use_shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             stdout, stderr = self.current_process.communicate()
-            
             if self.current_process.returncode != 0:
-                raw = stderr.strip() or stdout.strip()
-                self.set_status("Error Occurred! (Click for details)", "error", raw)
+                self.set_status("Error Occurred! (Click for details)", "error", raw_output=stderr.strip() or stdout.strip(), title="Background Task Failed")
                 self.is_processing = False
                 return False
             return True
         except Exception as e:
-            self.set_status("Error Occurred! (Click for details)", "error", str(e))
+            self.set_status("Error Occurred! (Click for details)", "error", raw_output=str(e), title="Execution Error")
             self.is_processing = False
             return False
         finally:
@@ -1022,9 +686,9 @@ If a drive dies or you accidentally delete a file, do not panic.
         if self.current_process and self.current_process.poll() is None:
             try:
                 subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.current_process.pid)], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                self.set_status("Active process killed.", "error", "The task was forcefully terminated by the user.")
+                self.set_status("Active process killed.", "error", raw_output="The task was forcefully terminated by the user.", title="Operation Aborted")
             except Exception as e:
-                self.set_status("Error aborting process", "error", str(e))
+                self.set_status("Error aborting process", "error", raw_output=str(e), title="Termination Error")
             finally:
                 self.current_process = None
         else:
@@ -1036,193 +700,124 @@ If a drive dies or you accidentally delete a file, do not panic.
             res = subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             if res.returncode == 0:
                 raw_users = [u.strip() for u in res.stdout.splitlines() if u.strip()]
-                filtered = []
-                for u in raw_users:
-                    ul = u.lower()
-                    if ul in ["administrator", "guest", "defaultaccount", "wdagutilityaccount", "family storage"]:
-                        continue
-                    if ul.startswith("defaultuser"):
-                        continue
-                    filtered.append(u)
-                
+                filtered = [u for u in raw_users if u.lower() not in ["administrator", "guest", "defaultaccount", "wdagutilityaccount", "family storage"] and not u.lower().startswith("defaultuser")]
                 self.discovered_users = filtered
-
                 def update_ui():
-                    self.lbl_user_summary.config(
-                        text=f"Detected Active Accounts ({len(filtered)}):\n" + ", ".join(filtered)
-                    )
+                    self.lbl_user_summary.config(text=f"Detected Active Accounts ({len(filtered)}):\n" + ", ".join(filtered))
                     curr_sel = self.user_listbox.curselection()
                     self.user_listbox.delete(0, tk.END)
-                    for user in self.discovered_users:
-                        self.user_listbox.insert(tk.END, user)
+                    for user in self.discovered_users: self.user_listbox.insert(tk.END, user)
                     if self.discovered_users:
-                        idx = curr_sel[0] if curr_sel and curr_sel[0] < len(self.discovered_users) else 0
-                        self.user_listbox.selection_set(idx)
+                        self.user_listbox.selection_set(curr_sel[0] if curr_sel and curr_sel[0] < len(self.discovered_users) else 0)
                         self.on_user_selection_changed()
-
                 self.root.after(0, update_ui)
-
         threading.Thread(target=fetch, daemon=True).start()
 
-    def create_user_only(self):
-        self._exec_create_user(advance_tabs=False)
-
-    def create_user_and_advance(self):
-        self._exec_create_user(advance_tabs=True)
+    def create_user_only(self): self._exec_create_user(advance_tabs=False)
+    def create_user_and_advance(self): self._exec_create_user(advance_tabs=True)
 
     def _exec_create_user(self, advance_tabs=False):
-        username = self.ent_v_user.get().strip()
-        password = self.ent_v_pass.get().strip()
-
+        username, password = self.ent_v_user.get().strip(), self.ent_v_pass.get().strip()
         if not username or not password:
             messagebox.showerror("Input Error", "Please enter both Username and Password.")
             return
-
         self.set_status(f"Creating user '{username}'...", "info")
         def process():
-            cmd = ["net", "user", username, password, "/add", "/expires:never"]
-            ok = self.run_cmd(cmd, f"Success! User '{username}' created.")
-            if ok:
+            if self.run_cmd(["net", "user", username, password, "/add", "/expires:never"], f"Success! User '{username}' created."):
                 self.root.after(0, lambda: self.ent_v_user.delete(0, tk.END))
                 self.root.after(0, lambda: self.ent_v_pass.delete(0, tk.END))
                 self.refresh_system_users()
-                if advance_tabs:
-                    self.root.after(0, lambda: self.switch_vertical_tab(2))
-
+                if advance_tabs: self.root.after(0, lambda: self.switch_vertical_tab(2))
         threading.Thread(target=process, daemon=True).start()
 
     def browse_nas_root(self):
         folder = filedialog.askdirectory()
         if folder:
-            norm = os.path.normpath(folder)
             self.ent_nas_root.delete(0, tk.END)
-            self.ent_nas_root.insert(0, norm)
+            self.ent_nas_root.insert(0, os.path.normpath(folder))
             self.scan_or_populate_folders()
-
-    def on_structure_mode_change(self):
-        pass
 
     def apply_structure_template(self):
         root_dir = self.ent_nas_root.get().strip()
         if not root_dir:
             messagebox.showerror("Missing Path", "Please select or enter the NAS Root Directory first.")
             return
-
         mode = self.var_struct_mode.get()
-
         try:
             os.makedirs(root_dir, exist_ok=True)
             if mode == "multi_private":
                 users_dir = os.path.join(root_dir, "Users")
                 os.makedirs(users_dir, exist_ok=True)
-                for user in self.discovered_users:
-                    os.makedirs(os.path.join(users_dir, user), exist_ok=True)
+                for user in self.discovered_users: os.makedirs(os.path.join(users_dir, user), exist_ok=True)
                 self.set_status(f"Created Private Structure under {users_dir}", "success")
-
             elif mode == "multi_shared":
-                shared_dir = os.path.join(root_dir, "Shared")
-                users_dir = os.path.join(root_dir, "Users")
+                shared_dir, users_dir = os.path.join(root_dir, "Shared"), os.path.join(root_dir, "Users")
                 os.makedirs(shared_dir, exist_ok=True)
                 os.makedirs(users_dir, exist_ok=True)
-                for user in self.discovered_users:
-                    os.makedirs(os.path.join(users_dir, user), exist_ok=True)
+                for user in self.discovered_users: os.makedirs(os.path.join(users_dir, user), exist_ok=True)
                 self.set_status(f"Created Shared & Private Structure under {root_dir}", "success")
-
             elif mode == "single_user":
                 self.set_status(f"Configured Single User root: {root_dir}", "success")
-
             self.scan_or_populate_folders()
-
         except Exception as e:
-            self.set_status("Error Occurred! (Click for details)", "error", str(e))
+            self.set_status("Error Occurred! (Click for details)", "error", raw_output=str(e), title="Directory Creation Error")
 
     def scan_or_populate_folders(self):
         root_dir = self.ent_nas_root.get().strip()
-        if not root_dir or not os.path.exists(root_dir):
-            return
-
+        if not root_dir or not os.path.exists(root_dir): return
         folders = []
         try:
             root_norm = os.path.normpath(root_dir)
             folders.append(root_norm)
-
             for item in os.listdir(root_norm):
                 full = os.path.join(root_norm, item)
                 if os.path.isdir(full):
                     folders.append(full)
                     if item.lower() == "users":
                         for u_item in os.listdir(full):
-                            u_full = os.path.join(full, u_item)
-                            if os.path.isdir(u_full):
-                                folders.append(u_full)
+                            if os.path.isdir(os.path.join(full, u_item)): folders.append(os.path.join(full, u_item))
         except Exception as e:
-            self.set_status("Error Occurred! (Click for details)", "error", str(e))
+            self.set_status("Error Occurred! (Click for details)", "error", raw_output=str(e), title="Directory Scan Error")
 
-        unique_map = {}
-        for f in folders:
-            unique_map[f.lower()] = f
-            
-        self.active_subfolders = sorted(list(unique_map.values()))
+        self.active_subfolders = sorted(list({f.lower(): f for f in folders}.values()))
         self.set_status(f"Discovered {len(self.active_subfolders)} folders under root.", "info")
         self.rebuild_permissions_ui()
 
     def rebuild_permissions_ui(self):
-        for widget in self.folder_inner_frame.winfo_children():
-            widget.destroy()
-
+        for widget in self.folder_inner_frame.winfo_children(): widget.destroy()
         sel = self.user_listbox.curselection()
         if not sel or not self.discovered_users:
-            tk.Label(
-                self.folder_inner_frame,
-                text="No user selected or accounts available.",
-                bg=self.palette["well_bg"], fg=self.palette["text_muted"], font=("Segoe UI", 9),
-            ).pack(anchor="w", padx=10, pady=10)
+            tk.Label(self.folder_inner_frame, text="No user selected or accounts available.", bg=self.palette["well_bg"], fg=self.palette["text_muted"], font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=10)
             return
 
         selected_user = self.discovered_users[sel[0]]
         self.lbl_perm_header.config(text=f"Folder Access for User: '{selected_user}'")
-
-        if selected_user not in self.user_folder_permissions:
-            self.user_folder_permissions[selected_user] = {}
+        if selected_user not in self.user_folder_permissions: self.user_folder_permissions[selected_user] = {}
 
         for fpath in self.active_subfolders:
             rel_name = os.path.basename(fpath) or fpath
-            is_own_home = (rel_name.lower() == selected_user.lower())
-            is_shared = ("shared" in fpath.lower())
+            is_own_home, is_shared = (rel_name.lower() == selected_user.lower()), ("shared" in fpath.lower())
 
             if fpath not in self.user_folder_permissions[selected_user]:
-                should_enable = is_own_home or is_shared
                 self.user_folder_permissions[selected_user][fpath] = {
-                    "enabled": tk.BooleanVar(value=should_enable),
-                    "read": tk.BooleanVar(value=True),
-                    "upload": tk.BooleanVar(value=not is_own_home),
-                    "create": tk.BooleanVar(value=not is_own_home),
-                    "delete": tk.BooleanVar(value=is_own_home),
-                    "full": tk.BooleanVar(value=is_own_home),
+                    "enabled": tk.BooleanVar(value=is_own_home or is_shared), "read": tk.BooleanVar(value=True),
+                    "upload": tk.BooleanVar(value=not is_own_home), "create": tk.BooleanVar(value=not is_own_home),
+                    "delete": tk.BooleanVar(value=is_own_home), "full": tk.BooleanVar(value=is_own_home),
                 }
 
             state = self.user_folder_permissions[selected_user][fpath]
-
             row_f = tk.Frame(self.folder_inner_frame, bg=self.palette["well_bg"])
             row_f.pack(fill="x", padx=8, pady=3)
-
             perm_f = tk.Frame(row_f, bg=self.palette["glass_rim_shadow"], padx=24, pady=6)
             
             def make_toggle(frame, var):
                 def _toggle():
-                    if var.get():
-                        frame.pack(fill="x", pady=(2, 6))
-                    else:
-                        frame.pack_forget()
+                    if var.get(): frame.pack(fill="x", pady=(2, 6))
+                    else: frame.pack_forget()
                     self.folder_scroll_canvas.configure(scrollregion=self.folder_scroll_canvas.bbox("all"))
                 return _toggle
 
-            chk_folder = ttk.Checkbutton(
-                row_f, text=fpath, variable=state["enabled"], style="Glass.TCheckbutton",
-                command=make_toggle(perm_f, state["enabled"])
-            )
-            chk_folder.pack(anchor="w", pady=2)
-
+            ttk.Checkbutton(row_f, text=fpath, variable=state["enabled"], style="Glass.TCheckbutton", command=make_toggle(perm_f, state["enabled"])).pack(anchor="w", pady=2)
             p_grid = tk.Frame(perm_f, bg=self.palette["glass_rim_shadow"])
             p_grid.pack(fill="x")
             
@@ -1231,7 +826,6 @@ If a drive dies or you accidentally delete a file, do not panic.
             ttk.Checkbutton(p_grid, text="Create New Folders", variable=state["create"], style="Dark.TCheckbutton").grid(row=0, column=2, sticky="w", padx=(0,15), pady=2)
             ttk.Checkbutton(p_grid, text="Delete Media", variable=state["delete"], style="Dark.TCheckbutton").grid(row=1, column=0, sticky="w", padx=(0,15), pady=2)
             ttk.Checkbutton(p_grid, text="Full Access", variable=state["full"], style="Dark.TCheckbutton").grid(row=1, column=1, sticky="w", padx=(0,15), pady=2)
-
             make_toggle(perm_f, state["enabled"])()
 
     def on_user_selection_changed(self, event=None):
@@ -1239,7 +833,7 @@ If a drive dies or you accidentally delete a file, do not panic.
 
     def apply_all_configured_permissions(self):
         if getattr(self, "is_processing", False):
-            self.set_status("Process already running. Please wait or press Stop.", "error", "Task blocked due to concurrency lock.")
+            self.set_status("Process already running. Please wait or press Stop.", "error", raw_output="Task blocked due to concurrency lock.", title="Concurrency Lock")
             return
 
         root_dir = self.ent_nas_root.get().strip()
@@ -1251,19 +845,13 @@ If a drive dies or you accidentally delete a file, do not panic.
 
         def process():
             try:
-                # 1. Determine Master Share Name based on the selected root folder
                 master_share = os.path.basename(root_dir.rstrip("\\/"))
-                if not master_share or len(master_share) == 2 and master_share[1] == ':':
-                    master_share = "RootNAS"
+                if not master_share or (len(master_share) == 2 and master_share[1] == ':'): master_share = "RootNAS"
 
-                self.set_status(f"Configuring Master Share: '{master_share}' with Access-Based Enumeration...", "info")
-
-                # 2. Clean up old, overlapping individual shares from previous versions
+                self.set_status(f"Configuring Master Share: '{master_share}' with ABE...", "info")
                 ps_cleanup = f"Get-SmbShare | Where-Object {{ $_.Path -like '{root_dir}\\*' -and $_.Name -ne '{master_share}' }} | Remove-SmbShare -Force"
-                self.run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cleanup], use_shell=False)
-                if not self.is_processing: return
-
-                # 3. Publish Master Share with Access-Based Enumeration (ABE) enabled
+                if not self.run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cleanup], use_shell=False): return
+                
                 ps_master = f"""
                 if (Get-SmbShare -Name '{master_share}' -ErrorAction SilentlyContinue) {{
                     Set-SmbShare -Name '{master_share}' -FolderEnumerationMode AccessBased -Force
@@ -1272,39 +860,23 @@ If a drive dies or you accidentally delete a file, do not panic.
                     New-SmbShare -Name '{master_share}' -Path '{root_dir}' -ChangeAccess 'Authenticated Users' -FolderEnumerationMode AccessBased
                 }}
                 """
-                self.run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_master], use_shell=False)
-                if not self.is_processing: return
+                if not self.run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_master], use_shell=False): return
+                if not self.run_quiet_cmd(f'icacls "{root_dir}" /grant "Authenticated Users":(RX)', use_shell=True): return
 
-                # 4. Grant Authenticated Users read/traverse access to the root folder itself so they can see inside the master share
-                self.run_quiet_cmd(f'icacls "{root_dir}" /grant "Authenticated Users":(RX)', use_shell=True)
-
-                # 5. Isolate all managed subfolders (Break inheritance so ABE actively hides them from unauthorized users)
                 for fpath in self.active_subfolders:
                     if not self.is_processing: return
                     self.run_quiet_cmd(f'icacls "{fpath}" /inheritance:r', use_shell=True)
                     self.run_quiet_cmd(f'icacls "{fpath}" /grant:r "Administrators":(OI)(CI)F', use_shell=True)
 
-                # 6. Apply user-specific explicit permissions to uncloak the folders for them
                 for user, fmap in self.user_folder_permissions.items():
                     for fpath, state in fmap.items():
                         if not self.is_processing: return 
-
                         if state["enabled"].get():
-                            if state["full"].get():
-                                ntfs_perm = "F"
-                            elif state["delete"].get() or state["create"].get() or state["upload"].get():
-                                ntfs_perm = "M"
-                            else:
-                                ntfs_perm = "R"
-
-                            rel_name = os.path.basename(fpath)
-                            self.set_status(f"Applying permissions for {user} -> {rel_name}...", "info")
-
-                            # Explicitly grant the user rights. ABE sees this and unhides the folder for them.
+                            ntfs_perm = "F" if state["full"].get() else "M" if (state["delete"].get() or state["create"].get() or state["upload"].get()) else "R"
+                            self.set_status(f"Applying permissions for {user} -> {os.path.basename(fpath)}...", "info")
                             self.run_quiet_cmd(f'icacls "{fpath}" /grant:r "{user}":(OI)(CI){ntfs_perm} /T', use_shell=True)
 
-                if self.is_processing:
-                    self.set_status(f"Success! Master Share '{master_share}' published with Access-Based Enumeration.", "success")
+                if self.is_processing: self.set_status(f"Success! Master Share '{master_share}' published with Access-Based Enumeration.", "success")
             finally:
                 self.is_processing = False
 
@@ -1312,41 +884,26 @@ If a drive dies or you accidentally delete a file, do not panic.
 
     def apply_hosts_alias(self):
         alias = self.ent_domain_alias.get().strip()
-        if not alias:
-            messagebox.showerror("Error", "Please enter a valid alias.")
-            return
-
+        if not alias: return messagebox.showerror("Error", "Please enter a valid alias.")
         alias_clean = re.sub(r"[^a-zA-Z0-9\.\-_]", "", alias)
         hosts_path = r"C:\Windows\System32\drivers\etc\hosts"
 
         try:
-            with open(hosts_path, "r") as f:
-                content = f.read()
-
-            entry = f"\n127.0.0.1\t{alias_clean}\n"
-            if alias_clean in content:
-                self.set_status(f"Alias '{alias_clean}' already exists in hosts file.", "info")
+            with open(hosts_path, "r") as f: content = f.read()
+            if alias_clean in content: self.set_status(f"Alias '{alias_clean}' already exists in hosts file.", "info")
             else:
-                with open(hosts_path, "a") as f:
-                    f.write(entry)
+                with open(hosts_path, "a") as f: f.write(f"\n127.0.0.1\t{alias_clean}\n")
                 self.set_status(f"Success! Added alias '{alias_clean}' -> 127.0.0.1 in hosts file.", "success")
-
         except Exception as e:
-            self.set_status("Error Occurred! (Click for details)", "error", str(e))
+            self.set_status("Error Occurred! (Click for details)", "error", raw_output=str(e), title="Hosts File Edit Error")
 
     def install_tailscale(self):
-        cmd = [
-            "winget", "install", "-e", "--id", "Tailscale.Tailscale", 
-            "--silent", "--accept-package-agreements", "--accept-source-agreements"
-        ]
+        cmd = ["winget", "install", "-e", "--id", "Tailscale.Tailscale", "--silent", "--accept-package-agreements", "--accept-source-agreements"]
         self.set_status("Fetching Tailscale via Windows Package Manager...", "info")
         self.run_cmd_thread(cmd, "Success! Tailscale installed.")
 
     def install_snapraid(self):
-        cmd = [
-            "winget", "install", "-e", "--id", "SnapRAID.SnapRAID", 
-            "--silent", "--accept-package-agreements", "--accept-source-agreements"
-        ]
+        cmd = ["winget", "install", "-e", "--id", "SnapRAID.SnapRAID", "--silent", "--accept-package-agreements", "--accept-source-agreements"]
         self.set_status("Fetching SnapRAID via Windows Package Manager...", "info")
         self.run_cmd_thread(cmd, "Success! SnapRAID installed.")
 
