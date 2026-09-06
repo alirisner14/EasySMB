@@ -861,6 +861,12 @@ If a drive dies or you accidentally delete a file:
                 }}
                 """
                 if not self.run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_master], use_shell=False): return
+                
+                self.set_status("Reclaiming administrative ownership of all files...", "info")
+                takeown_cmd = f'takeown /F "{root_dir}" /R /D Y'
+                subprocess.run(takeown_cmd, shell=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                if not self.is_processing: return
+                
                 if not self.run_quiet_cmd(f'icacls "{root_dir}" /grant "Authenticated Users":(RX)', use_shell=True): return
 
                 for fpath in self.active_subfolders:
