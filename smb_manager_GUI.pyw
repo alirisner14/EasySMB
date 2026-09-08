@@ -1,4 +1,6 @@
+import base64
 import ctypes
+import json
 import os
 import re
 import socket
@@ -6,10 +8,16 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import urllib.parse
 import webbrowser
+import http.server
+import socketserver
 from tkinter import filedialog, messagebox, ttk
 
 
+# =========================================================================
+# SYSTEM & ADMIN HELPER FUNCTIONS
+# =========================================================================
 def is_admin():
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
@@ -29,6 +37,188 @@ def run_as_admin():
         sys.exit(0)
 
 
+def load_config():
+    """Loads settings for the headless web server."""
+    try:
+        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        with open(os.path.join(base_dir, "easynas_config.json"), "r") as f:
+            return json.load(f)
+    except:
+        return {"root_dir": "C:\\", "web_pass": ""}
+
+
+# =========================================================================
+# HEADLESS WEB DASHBOARD SERVER (RUNS WHEN --headless IS PASSED)
+# =========================================================================
+class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
+    def check_auth(self):
+        config = load_config()
+        expected_pass = config.get("web_pass", "")
+        if not expected_pass:
+            return True  # If no password was set, allow access
+            
+        auth_header = self.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Basic "):
+            try:
+                encoded = auth_header.split(" ")[1]
+                decoded = base64.b64decode(encoded).decode("utf-8")
+                username, password = decoded.split(":", 1)
+                if username == "admin" and password == expected_pass:
+                    return True
+            except:
+                pass
+        return False
+
+    def require_auth(self):
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="EasyNAS Secure Dashboard"')
+        self.end_headers()
+        self.wfile.write(b"Unauthorized. Please provide the admin password.")
+
+    def get_users(self):
+        res = subprocess.run(["powershell", "-NoProfile", "-Command", "Get-LocalUser | Where-Object { $_.Enabled -eq $True } | Select-Object -ExpandProperty Name"], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        users = [u.strip() for u in res.stdout.splitlines() if u.strip()]
+        return [u for u in users if u.lower() not in ["administrator", "guest", "defaultaccount", "wdagutilityaccount", "family storage"] and not u.lower().startswith("defaultuser")]
+
+    def get_folders(self):
+        config = load_config()
+        root_dir = config.get("root_dir", "")
+        if not root_dir or not os.path.exists(root_dir): return []
+        folders = [os.path.normpath(root_dir)]
+        for item in os.listdir(root_dir):
+            full = os.path.join(root_dir, item)
+            if os.path.isdir(full):
+                folders.append(full)
+                if item.lower() == "users":
+                    for u in os.listdir(full):
+                        if os.path.isdir(os.path.join(full, u)): folders.append(os.path.join(full, u))
+        return sorted(list({f.lower(): f for f in folders}.values()))
+
+    def do_GET(self):
+        if not self.check_auth():
+            self.require_auth()
+            return
+            
+        users = self.get_users()
+        folders = self.get_folders()
+        
+        html = f"""
+        <html><head><title>EasyNAS Dashboard</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body {{ font-family: 'Segoe UI', sans-serif; background: #161719; color: #e5e7eb; padding: 20px; }}
+          .card {{ background: #212327; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }}
+          button {{ background: #4d79ff; color: white; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 10px; font-size: 14px; }}
+          button:hover {{ background: #3b5bdb; }}
+          select, input {{ width: 100%; padding: 12px; margin-bottom: 15px; background: #141517; color: white; border: 1px solid #2c2f35; border-radius: 6px; font-size: 14px; }}
+          h2, h3 {{ color: #ffffff; margin-top: 0; }}
+        </style>
+        </head><body>
+        <h2>EasyNAS Remote Dashboard</h2>
+        
+        <div class="card">
+          <h3>⛁ SnapRAID Control</h3>
+          <form method="POST" action="/snapraid?cmd=status"><button type="submit">Check Array Status</button></form>
+          <form method="POST" action="/snapraid?cmd=sync"><button type="submit" style="background:#34d399; color:#061a15;">Run Parity Sync</button></form>
+          <form method="POST" action="/snapraid?cmd=smart"><button type="submit">Check SMART Hardware Health</button></form>
+        </div>
+        
+        <div class="card">
+          <h3>✦ Quick Folder Permissions</h3>
+          <form method="POST" action="/perms">
+             <label>Select User:</label>
+             <select name="user">{"".join(f'<option value="{u}">{u}</option>' for u in users)}</select>
+             <label>Select Folder:</label>
+             <select name="folder">{"".join(f'<option value="{f}">{os.path.basename(f)}</option>' for f in folders)}</select>
+             <label>Access Level:</label>
+             <select name="level">
+                <option value="RX">Read Only (Visible)</option>
+                <option value="M">Modify (Read, Write, Delete)</option>
+                <option value="F">Full Control</option>
+                <option value="REMOVE">Revoke Access (Hide Folder)</option>
+             </select>
+             <button type="submit" style="background:#6366f1;">Apply Permission Target</button>
+          </form>
+        </div>
+        </body></html>
+        """
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
+
+    def do_POST(self):
+        if not self.check_auth():
+            self.require_auth()
+            return
+            
+        parsed = urllib.parse.urlparse(self.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length).decode('utf-8')
+        post_qs = urllib.parse.parse_qs(post_data)
+        
+        output = ""
+        if parsed.path == "/snapraid":
+            cmd = qs.get("cmd", [""])[0]
+            if cmd in ["status", "sync", "smart"]:
+                exe = r"C:\\SnapRAID\\snapraid.exe" if os.path.exists(r"C:\\SnapRAID\\snapraid.exe") else "snapraid"
+                try:
+                    res = subprocess.run([exe, cmd], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    output = res.stdout + res.stderr
+                except Exception as e:
+                    output = str(e)
+                    
+        elif parsed.path == "/perms":
+            user = post_qs.get("user", [""])[0]
+            folder = post_qs.get("folder", [""])[0]
+            level = post_qs.get("level", [""])[0]
+            if user and folder and level:
+                try:
+                    if level == "REMOVE":
+                        cmd = f'icacls "{folder}" /remove "{user}"'
+                    else:
+                        cmd = f'icacls "{folder}" /grant:r "{user}":(OI)(CI){level} /T'
+                    res = subprocess.run(cmd, shell=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    output = f"Applied {level} to {user} for folder {os.path.basename(folder)}\n\n" + res.stdout + res.stderr
+                except Exception as e:
+                    output = str(e)
+                    
+        html = f"""
+        <html><head><title>Command Result</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>body {{ font-family: 'Segoe UI'; background: #161719; color: #e5e7eb; padding: 20px; }}
+        pre {{ background: #101113; padding: 15px; border-radius: 8px; color: #34d399; overflow-x: auto; white-space: pre-wrap; }}
+        a {{ color: #4d79ff; text-decoration: none; font-weight: bold; font-size: 16px; padding: 10px; background: #212327; border-radius: 6px; display: inline-block; margin-bottom: 20px; }}
+        a:hover {{ background: #2c2f35; }}</style>
+        </head><body>
+        <a href="/">← Back to Dashboard</a>
+        <h2>Output Log:</h2>
+        <pre>{output}</pre>
+        </body></html>
+        """
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
+
+
+def run_headless_server():
+    """Initializes the background web server and proxies it through Tailscale."""
+    ts_process = subprocess.Popen(["tailscale", "serve", "localhost:5050"], creationflags=subprocess.CREATE_NO_WINDOW)
+    handler = WebDashboardHandler
+    with socketserver.TCPServer(("127.0.0.1", 5050), handler) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            ts_process.terminate()
+
+
+# =========================================================================
+# DESKTOP GUI CLASSES
+# =========================================================================
 class FrostedGlassButton(tk.Canvas):
     def __init__(
         self, parent, text, command, width=180, height=38, radius=18, color_scheme="neutral", **kwargs
@@ -53,6 +243,8 @@ class FrostedGlassButton(tk.Canvas):
             self.colors = {"base": "#1a1b1e", "hover": "#25272c", "press": "#141517", "rim_light": "#36383f", "rim_dark": "#0e0f11", "text": "#9ca3af", "glow": "#4a4d55"}
         elif self.color_scheme == "nav_active":
             self.colors = {"base": "#282a2f", "hover": "#32353b", "press": "#1e2023", "rim_light": "#5c6370", "rim_dark": "#141517", "text": "#ffffff", "glow": "#828997"}
+        elif self.color_scheme == "success":
+            self.colors = {"base": "#1b4d3e", "hover": "#246652", "press": "#123329", "rim_light": "#34d399", "rim_dark": "#061a15", "text": "#ffffff", "glow": "#6ee7b7"}
         else:
             self.colors = {"base": "#282a2e", "hover": "#33363b", "press": "#1e2023", "rim_light": "#4a4d53", "rim_dark": "#141517", "text": "#e5e7eb", "glow": "#9ca3af"}
 
@@ -121,9 +313,9 @@ class GlassSMBManagerApp:
 
         self.current_process = None
         self.is_processing = False
+        self.takeown_completed = False
         self.current_output_raw = ""
         self.current_output_title = ""
-        self.current_output_desc = ""
 
         self.palette = {
             "bg_dark": "#161719", "bg_tint": "#1a1b1e", "glass_card": "#212327", "glass_rim_light": "#3b3e45",
@@ -150,14 +342,17 @@ class GlassSMBManagerApp:
         self.tab_smb = tk.Frame(self.notebook, bg=self.palette["bg_tint"])
         self.tab_tailscale = tk.Frame(self.notebook, bg=self.palette["bg_tint"])
         self.tab_snapraid = tk.Frame(self.notebook, bg=self.palette["bg_tint"])
+        self.tab_web = tk.Frame(self.notebook, bg=self.palette["bg_tint"])
 
         self.notebook.add(self.tab_smb, text="  ✦ User & Folder Setup  ")
         self.notebook.add(self.tab_tailscale, text="  ☁ Remote Access (Tailscale)  ")
-        self.notebook.add(self.tab_snapraid, text="  ⛁ Backup & Recovery (SnapRAID)  ")
+        self.notebook.add(self.tab_snapraid, text="  ⛁ Backup & Recovery  ")
+        self.notebook.add(self.tab_web, text="  🌐 Headless Web Portal  ")
 
         self.build_smb_vertical_workflow()
         self.build_tailscale_tab()
         self.build_snapraid_tab()
+        self.build_web_tab()
         self.build_status_bar()
 
         self.refresh_system_users()
@@ -181,12 +376,15 @@ class GlassSMBManagerApp:
         style.configure("TNotebook", background=self.palette["bg_tint"], borderwidth=0, tabmargins=[0, 0, 0, 8])
         style.configure("TNotebook.Tab", background="#1e2024", foreground=self.palette["text_muted"], padding=[20, 8], font=("Segoe UI", 10, "bold"), borderwidth=1, relief="flat")
         style.map("TNotebook.Tab", background=[("selected", "#32353b"), ("active", "#282a2f")], foreground=[("selected", self.palette["text_bright"]), ("active", self.palette["text_frost"])])
-        style.configure("Glass.TCheckbutton", background=self.palette["well_bg"], foreground=self.palette["text_frost"], font=("Segoe UI", 9, "bold"))
-        style.map("Glass.TCheckbutton", background=[("active", self.palette["well_bg"])], foreground=[("active", "#ffffff")])
+        
+        style.configure("Glass.TCheckbutton", background=self.palette["glass_rim_shadow"], foreground=self.palette["text_bright"], font=("Segoe UI", 9, "bold"))
+        style.map("Glass.TCheckbutton", background=[("active", self.palette["glass_rim_shadow"])], foreground=[("active", self.palette["text_bright"])])
+        
+        style.configure("Dark.TCheckbutton", background=self.palette["glass_rim_shadow"], foreground=self.palette["text_frost"], font=("Segoe UI", 9))
+        style.map("Dark.TCheckbutton", background=[("active", self.palette["glass_rim_shadow"])], foreground=[("active", "#ffffff")])
+        
         style.configure("Glass.TRadiobutton", background=self.palette["glass_card"], foreground=self.palette["text_frost"], font=("Segoe UI", 9, "bold"))
         style.map("Glass.TRadiobutton", background=[("active", self.palette["glass_card"])], foreground=[("active", "#ffffff")])
-        style.configure("Dark.TCheckbutton", background=self.palette["glass_rim_shadow"], foreground=self.palette["text_bright"], font=("Segoe UI", 9))
-        style.map("Dark.TCheckbutton", background=[("active", self.palette["glass_rim_shadow"])], foreground=[("active", "#ffffff")])
         style.configure("Vertical.TScrollbar", background=self.palette["glass_card"], troughcolor=self.palette["well_bg"])
 
     def create_glass_card(self, parent, title=""):
@@ -310,7 +508,7 @@ class GlassSMBManagerApp:
 
         right_perm_box = tk.Frame(matrix_split, bg=self.palette["glass_card"])
         right_perm_box.pack(side="right", fill="both", expand=True)
-        self.lbl_perm_header = tk.Label(right_perm_box, text="2. Check what they are allowed to see/do:", bg=self.palette["glass_card"], fg=self.palette["text_glow"], font=("Segoe UI", 9, "bold"))
+        self.lbl_perm_header = tk.Label(right_perm_box, text="2. Configure Subfolder Access:", bg=self.palette["glass_card"], fg=self.palette["text_glow"], font=("Segoe UI", 9, "bold"))
         self.lbl_perm_header.pack(anchor="w")
 
         scroll_container = tk.Frame(right_perm_box, bg=self.palette["glass_card"])
@@ -333,7 +531,7 @@ class GlassSMBManagerApp:
 
         apply_bar = tk.Frame(matrix_card, bg=self.palette["glass_card"])
         apply_bar.pack(fill="x", pady=(6, 2))
-        FrostedGlassButton(apply_bar, text="⚡ Apply Security Locks & Publish Network Share", command=self.apply_all_configured_permissions, width=360, height=38, radius=18, color_scheme="accent").pack(side="left", padx=(0, 10))
+        FrostedGlassButton(apply_bar, text="⚡ Save All Changes & Publish Server", command=self.apply_all_configured_permissions, width=320, height=38, radius=18, color_scheme="accent").pack(side="right", padx=(0, 10))
 
     def build_vview_step3(self):
         dom_rim, dom_card = self.create_glass_card(self.view_step3, title="Step 5: Memorable Server Name")
@@ -505,6 +703,86 @@ If a drive dies or you accidentally delete a file:
         txt.insert("1.0", guide_content)
         txt.config(state="disabled")
 
+    def build_web_tab(self):
+        panel = tk.Frame(self.tab_web, bg=self.palette["bg_tint"])
+        panel.pack(fill="both", expand=True, pady=6)
+
+        card_rim, card = self.create_glass_card(panel, title="2-in-1 Headless Web Dashboard")
+        card_rim.pack(fill="x", pady=(0, 6))
+
+        desc = (
+            "Transform this program into a standalone background service. Once deployed, it runs a lightweight web\n"
+            "dashboard securely over Tailscale. You can check SnapRAID and set folder permissions remotely from any\n"
+            "browser in your Tailscale network without needing to Remote Desktop into this server."
+        )
+        tk.Label(card, text=desc, bg=self.palette["glass_card"], fg=self.palette["text_frost"], font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 12))
+
+        tk.Label(card, text="Set Dashboard Password (to keep non-admins out):", bg=self.palette["glass_card"], fg=self.palette["text_muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        _, self.ent_web_pass = self.create_glass_entry(card, width=40, show="*")
+        self.ent_web_pass.master.pack(anchor="w", pady=(2, 10))
+
+        btn_row = tk.Frame(card, bg=self.palette["glass_card"])
+        btn_row.pack(fill="x", pady=4)
+        
+        FrostedGlassButton(btn_row, text="Deploy Background Web Service", command=self.deploy_headless_service, width=280, height=38, radius=18, color_scheme="accent").pack(side="left", padx=(0, 12))
+        FrostedGlassButton(btn_row, text="Stop & Remove Service", command=self.remove_headless_service, width=220, height=38, radius=18, color_scheme="danger").pack(side="left")
+
+        guide_rim, guide_frame = self.create_glass_card(panel, title="How to Access the Portal")
+        guide_rim.pack(fill="both", expand=True, pady=(6, 0))
+        txt = tk.Text(guide_frame, bg=self.palette["well_bg"], fg=self.palette["text_frost"], font=("Consolas", 9), wrap="word", relief="flat", padx=12, pady=12)
+        txt.insert("1.0", "HOW TO USE THE WEB PORTAL\n\n"
+                          "1. Set a password and click 'Deploy Background Web Service' above.\n"
+                          "2. On your phone or laptop, ensure you are connected to Tailscale.\n"
+                          "3. Open your web browser and go to your server's Tailscale HTTPS address.\n"
+                          "   (e.g., https://easynas.your-tailnet.ts.net)\n\n"
+                          "SECURITY NOTE:\n"
+                          "Your browser will immediately pop up a login prompt. Type 'admin' as the username, and the password you set above. Because this is routed exclusively through Tailscale, the connection remains fully encrypted and invisible to the public internet.")
+        txt.config(state="disabled")
+        
+        scroll = ttk.Scrollbar(guide_frame, orient="vertical", command=txt.yview, style="Vertical.TScrollbar")
+        txt.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+
+    def deploy_headless_service(self):
+        web_pass = self.ent_web_pass.get().strip()
+        root_dir = self.ent_nas_root.get().strip()
+        if not root_dir:
+            messagebox.showerror("Error", "Please select the Main Server Folder in the SMB tab first so the web server knows where your files live.")
+            return
+        if not web_pass:
+            messagebox.showerror("Error", "Please enter a password to secure the dashboard.")
+            return
+            
+        config = {"web_pass": web_pass, "root_dir": root_dir}
+        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        with open(os.path.join(base_dir, "easynas_config.json"), "w") as f:
+            json.dump(config, f)
+            
+        exe_path = os.path.abspath(sys.argv[0])
+        if exe_path.endswith(".py") or exe_path.endswith(".pyw"):
+            cmd = f'"{sys.executable}" "{exe_path}" --headless'
+        else:
+            cmd = f'"{exe_path}" --headless'
+            
+        task_cmd = ['schtasks', '/create', '/tn', 'EasyNAS_WebDashboard', '/tr', cmd, '/sc', 'onlogon', '/rl', 'highest', '/f']
+        res = subprocess.run(task_cmd, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        
+        if res.returncode == 0:
+            subprocess.run(['schtasks', '/run', '/tn', 'EasyNAS_WebDashboard'], creationflags=subprocess.CREATE_NO_WINDOW)
+            self.set_status("Success! Headless web service deployed and running.", "success")
+            self.ent_web_pass.delete(0, tk.END)
+        else:
+            self.set_status("Failed to create background task. (Click for details)", "error", raw_output=res.stderr.decode())
+
+    def remove_headless_service(self):
+        subprocess.run(['schtasks', '/end', '/tn', 'EasyNAS_WebDashboard'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        res = subprocess.run(['schtasks', '/delete', '/tn', 'EasyNAS_WebDashboard', '/f'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        if res.returncode == 0:
+            self.set_status("Success! Headless service stopped and removed.", "success")
+        else:
+            self.set_status("Could not remove task or it does not exist.", "info")
+
     # =========================================================================
     # SNAPRAID COMMAND HANDLERS
     # =========================================================================
@@ -605,7 +883,7 @@ If a drive dies or you accidentally delete a file:
 
     def translate_error(self, err_text):
         err_lower = err_text.lower()
-        if "access is denied" in err_lower or "error 5" in err_lower: return "Windows blocked this action. Ensure you have Administrative rights."
+        if "access is denied" in err_lower or "error 5" in err_lower: return "Windows blocked this action. Ensure you have Administrative rights and file ownership."
         if "already exists" in err_lower: return "The user account or share name you are trying to create already exists."
         if "cannot find path" in err_lower: return "The specified folder path does not exist or was moved."
         if "winget" in err_lower and "agreements" in err_lower: return "Windows Package Manager requires you to accept terms."
@@ -694,6 +972,14 @@ If a drive dies or you accidentally delete a file:
         else:
             self.set_status("No active background task to cancel.", "info")
 
+    def _background_takeown(self, root_dir):
+        try:
+            takeown_cmd = f'takeown /F "{root_dir}" /R /D Y'
+            subprocess.run(takeown_cmd, shell=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.set_status("First-time session sweep completed. Folder ownership optimized.", "success")
+        except Exception as e:
+            self.set_status("Background sweep failed. (Click for details)", "error", raw_output=str(e), title="Sweep Error")
+
     def refresh_system_users(self):
         def fetch():
             ps_cmd = "Get-LocalUser | Where-Object { $_.Enabled -eq $True } | Select-Object -ExpandProperty Name"
@@ -765,6 +1051,12 @@ If a drive dies or you accidentally delete a file:
     def scan_or_populate_folders(self):
         root_dir = self.ent_nas_root.get().strip()
         if not root_dir or not os.path.exists(root_dir): return
+        
+        if not self.takeown_completed:
+            self.takeown_completed = True
+            self.set_status("Reclaiming administrative ownership (First-time session sweep)...", "info")
+            threading.Thread(target=self._background_takeown, args=(root_dir,), daemon=True).start()
+
         folders = []
         try:
             root_norm = os.path.normpath(root_dir)
@@ -780,7 +1072,6 @@ If a drive dies or you accidentally delete a file:
             self.set_status("Error Occurred! (Click for details)", "error", raw_output=str(e), title="Directory Scan Error")
 
         self.active_subfolders = sorted(list({f.lower(): f for f in folders}.values()))
-        self.set_status(f"Discovered {len(self.active_subfolders)} folders under root.", "info")
         self.rebuild_permissions_ui()
 
     def rebuild_permissions_ui(self):
@@ -796,40 +1087,79 @@ If a drive dies or you accidentally delete a file:
 
         for fpath in self.active_subfolders:
             rel_name = os.path.basename(fpath) or fpath
-            is_own_home, is_shared = (rel_name.lower() == selected_user.lower()), ("shared" in fpath.lower())
+            is_own_home = (rel_name.lower() == selected_user.lower())
 
             if fpath not in self.user_folder_permissions[selected_user]:
                 self.user_folder_permissions[selected_user][fpath] = {
-                    "enabled": tk.BooleanVar(value=is_own_home or is_shared), "read": tk.BooleanVar(value=True),
-                    "upload": tk.BooleanVar(value=not is_own_home), "create": tk.BooleanVar(value=not is_own_home),
-                    "delete": tk.BooleanVar(value=is_own_home), "full": tk.BooleanVar(value=is_own_home),
+                    "enabled": tk.BooleanVar(value=is_own_home),
+                    "full": tk.BooleanVar(value=is_own_home),
+                    "read": tk.BooleanVar(value=False),
+                    "create": tk.BooleanVar(value=False),
+                    "delete": tk.BooleanVar(value=False),
                 }
 
             state = self.user_folder_permissions[selected_user][fpath]
             row_f = tk.Frame(self.folder_inner_frame, bg=self.palette["well_bg"])
             row_f.pack(fill="x", padx=8, pady=3)
-            perm_f = tk.Frame(row_f, bg=self.palette["glass_rim_shadow"], padx=24, pady=6)
             
-            def make_toggle(frame, var):
+            def make_toggle(frame):
                 def _toggle():
-                    if var.get(): frame.pack(fill="x", pady=(2, 6))
-                    else: frame.pack_forget()
+                    if frame.winfo_ismapped(): frame.pack_forget()
+                    else: frame.pack(fill="x", pady=(0, 6))
                     self.folder_scroll_canvas.configure(scrollregion=self.folder_scroll_canvas.bbox("all"))
                 return _toggle
 
-            ttk.Checkbutton(row_f, text=fpath, variable=state["enabled"], style="Glass.TCheckbutton", command=make_toggle(perm_f, state["enabled"])).pack(anchor="w", pady=2)
-            p_grid = tk.Frame(perm_f, bg=self.palette["glass_rim_shadow"])
-            p_grid.pack(fill="x")
+            perm_f = tk.Frame(row_f, bg=self.palette["glass_rim_shadow"], padx=24, pady=6)
+            btn_header = tk.Button(row_f, text=f"▶ {fpath}", bg=self.palette["glass_card"], fg=self.palette["text_bright"], font=("Segoe UI", 9, "bold"), relief="flat", anchor="w", padx=10, command=make_toggle(perm_f))
+            btn_header.pack(fill="x")
             
-            ttk.Checkbutton(p_grid, text="Read Only", variable=state["read"], style="Dark.TCheckbutton").grid(row=0, column=0, sticky="w", padx=(0,15), pady=2)
-            ttk.Checkbutton(p_grid, text="Upload Media", variable=state["upload"], style="Dark.TCheckbutton").grid(row=0, column=1, sticky="w", padx=(0,15), pady=2)
-            ttk.Checkbutton(p_grid, text="Create New Folders", variable=state["create"], style="Dark.TCheckbutton").grid(row=0, column=2, sticky="w", padx=(0,15), pady=2)
-            ttk.Checkbutton(p_grid, text="Delete Media", variable=state["delete"], style="Dark.TCheckbutton").grid(row=1, column=0, sticky="w", padx=(0,15), pady=2)
-            ttk.Checkbutton(p_grid, text="Full Access", variable=state["full"], style="Dark.TCheckbutton").grid(row=1, column=1, sticky="w", padx=(0,15), pady=2)
-            make_toggle(perm_f, state["enabled"])()
+            top_grid = tk.Frame(perm_f, bg=self.palette["glass_rim_shadow"])
+            top_grid.pack(fill="x", pady=(4, 8))
+            ttk.Checkbutton(top_grid, text="Visible to User (Uncloak Folder)", variable=state["enabled"], style="Glass.TCheckbutton").pack(anchor="w", pady=2)
+            ttk.Checkbutton(top_grid, text="FULL ACCESS (Read, Write, & Delete)", variable=state["full"], style="Glass.TCheckbutton").pack(anchor="w", pady=2)
+            
+            tk.Frame(perm_f, bg=self.palette["glass_rim_light"], height=1).pack(fill="x", pady=4)
+            
+            btm_grid = tk.Frame(perm_f, bg=self.palette["glass_rim_shadow"])
+            btm_grid.pack(fill="x", pady=(4, 8))
+            ttk.Checkbutton(btm_grid, text="Read / View Files", variable=state["read"], style="Dark.TCheckbutton").grid(row=0, column=0, sticky="w", padx=(0,20), pady=4)
+            ttk.Checkbutton(btm_grid, text="Add / Create Sub-Folders", variable=state["create"], style="Dark.TCheckbutton").grid(row=0, column=1, sticky="w", padx=(0,20), pady=4)
+            ttk.Checkbutton(btm_grid, text="Delete / Move Files", variable=state["delete"], style="Dark.TCheckbutton").grid(row=0, column=2, sticky="w", padx=(0,20), pady=4)
+            
+            save_btn_frame = tk.Frame(perm_f, bg=self.palette["glass_rim_shadow"])
+            save_btn_frame.pack(fill="x", pady=4)
+            FrostedGlassButton(save_btn_frame, text="💾 Save This Folder Only", command=lambda u=selected_user, f=fpath, s=state: self.apply_single_folder_permissions(u, f, s), width=200, height=32, radius=14, color_scheme="neutral").pack(side="right")
 
     def on_user_selection_changed(self, event=None):
         self.rebuild_permissions_ui()
+
+    def apply_single_folder_permissions(self, user, fpath, state):
+        if getattr(self, "is_processing", False):
+            self.set_status("Process already running.", "error", raw_output="Task blocked due to concurrency lock.", title="Concurrency Lock")
+            return
+            
+        self.is_processing = True
+        
+        def process():
+            try:
+                self.set_status(f"Updating permissions for {user} -> {os.path.basename(fpath)}...", "info")
+                if not state["enabled"].get():
+                    self.run_quiet_cmd(f'icacls "{fpath}" /remove "{user}"', use_shell=True)
+                else:
+                    if state["full"].get(): ntfs_perm = "F"
+                    elif state["delete"].get(): ntfs_perm = "M"
+                    elif state["create"].get(): ntfs_perm = "(RX,W)"
+                    elif state["read"].get(): ntfs_perm = "RX"
+                    else: ntfs_perm = "RX"
+                    
+                    self.run_quiet_cmd(f'icacls "{fpath}" /grant:r "{user}":(OI)(CI){ntfs_perm} /T', use_shell=True)
+                    
+                if self.is_processing: 
+                    self.set_status(f"Success! Saved folder rules for {user}.", "success")
+            finally:
+                self.is_processing = False
+                
+        threading.Thread(target=process, daemon=True).start()
 
     def apply_all_configured_permissions(self):
         if getattr(self, "is_processing", False):
@@ -861,12 +1191,6 @@ If a drive dies or you accidentally delete a file:
                 }}
                 """
                 if not self.run_quiet_cmd(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_master], use_shell=False): return
-                
-                self.set_status("Reclaiming administrative ownership of all files...", "info")
-                takeown_cmd = f'takeown /F "{root_dir}" /R /D Y'
-                subprocess.run(takeown_cmd, shell=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                if not self.is_processing: return
-                
                 if not self.run_quiet_cmd(f'icacls "{root_dir}" /grant "Authenticated Users":(RX)', use_shell=True): return
 
                 for fpath in self.active_subfolders:
@@ -877,47 +1201,32 @@ If a drive dies or you accidentally delete a file:
                 for user, fmap in self.user_folder_permissions.items():
                     for fpath, state in fmap.items():
                         if not self.is_processing: return 
-                        if state["enabled"].get():
-                            ntfs_perm = "F" if state["full"].get() else "M" if (state["delete"].get() or state["create"].get() or state["upload"].get()) else "R"
+                        if not state["enabled"].get():
+                            self.run_quiet_cmd(f'icacls "{fpath}" /remove "{user}"', use_shell=True)
+                        else:
+                            if state["full"].get(): ntfs_perm = "F"
+                            elif state["delete"].get(): ntfs_perm = "M"
+                            elif state["create"].get(): ntfs_perm = "(RX,W)"
+                            elif state["read"].get(): ntfs_perm = "RX"
+                            else: ntfs_perm = "RX"
+                            
                             self.set_status(f"Applying permissions for {user} -> {os.path.basename(fpath)}...", "info")
                             self.run_quiet_cmd(f'icacls "{fpath}" /grant:r "{user}":(OI)(CI){ntfs_perm} /T', use_shell=True)
 
-                if self.is_processing: self.set_status(f"Success! Master Share '{master_share}' published with Access-Based Enumeration.", "success")
+                if self.is_processing: self.set_status(f"Success! Saved all changes & published Master Share.", "success")
             finally:
                 self.is_processing = False
 
         threading.Thread(target=process, daemon=True).start()
 
-    def apply_hosts_alias(self):
-        alias = self.ent_domain_alias.get().strip()
-        if not alias: return messagebox.showerror("Error", "Please enter a valid alias.")
-        alias_clean = re.sub(r"[^a-zA-Z0-9\.\-_]", "", alias)
-        hosts_path = r"C:\Windows\System32\drivers\etc\hosts"
-
-        try:
-            with open(hosts_path, "r") as f: content = f.read()
-            if alias_clean in content: self.set_status(f"Alias '{alias_clean}' already exists in hosts file.", "info")
-            else:
-                with open(hosts_path, "a") as f: f.write(f"\n127.0.0.1\t{alias_clean}\n")
-                self.set_status(f"Success! Added alias '{alias_clean}' -> 127.0.0.1 in hosts file.", "success")
-        except Exception as e:
-            self.set_status("Error Occurred! (Click for details)", "error", raw_output=str(e), title="Hosts File Edit Error")
-
-    def install_tailscale(self):
-        cmd = ["winget", "install", "-e", "--id", "Tailscale.Tailscale", "--silent", "--accept-package-agreements", "--accept-source-agreements"]
-        self.set_status("Fetching Tailscale via Windows Package Manager...", "info")
-        self.run_cmd_thread(cmd, "Success! Tailscale installed.")
-
-    def install_snapraid(self):
-        cmd = ["winget", "install", "-e", "--id", "SnapRAID.SnapRAID", "--silent", "--accept-package-agreements", "--accept-source-agreements"]
-        self.set_status("Fetching SnapRAID via Windows Package Manager...", "info")
-        self.run_cmd_thread(cmd, "Success! SnapRAID installed.")
-
 
 if __name__ == "__main__":
-    if not is_admin():
-        run_as_admin()
+    if "--headless" in sys.argv:
+        run_headless_server()
     else:
-        root = tk.Tk()
-        app = GlassSMBManagerApp(root)
-        root.mainloop()
+        if not is_admin():
+            run_as_admin()
+        else:
+            root = tk.Tk()
+            app = GlassSMBManagerApp(root)
+            root.mainloop()
