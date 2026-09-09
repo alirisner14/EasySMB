@@ -1219,6 +1219,31 @@ If a drive dies or you accidentally delete a file:
 
         threading.Thread(target=process, daemon=True).start()
 
+    def apply_hosts_alias(self):
+        alias = self.ent_domain_alias.get().strip()
+        if not alias: return messagebox.showerror("Error", "Please enter a valid alias.")
+        alias_clean = re.sub(r"[^a-zA-Z0-9\.\-_]", "", alias)
+        hosts_path = r"C:\Windows\System32\drivers\etc\hosts"
+
+        try:
+            with open(hosts_path, "r") as f: content = f.read()
+            if alias_clean in content: self.set_status(f"Alias '{alias_clean}' already exists in hosts file.", "info")
+            else:
+                with open(hosts_path, "a") as f: f.write(f"\n127.0.0.1\t{alias_clean}\n")
+                self.set_status(f"Success! Added alias '{alias_clean}' -> 127.0.0.1 in hosts file.", "success")
+        except Exception as e:
+            self.set_status("Error Occurred! (Click for details)", "error", raw_output=str(e), title="Hosts File Edit Error")
+
+    def install_tailscale(self):
+        cmd = ["winget", "install", "-e", "--id", "Tailscale.Tailscale", "--silent", "--accept-package-agreements", "--accept-source-agreements"]
+        self.set_status("Fetching Tailscale via Windows Package Manager...", "info")
+        self.run_cmd_thread(cmd, "Success! Tailscale installed.")
+
+    def install_snapraid(self):
+        cmd = ["winget", "install", "-e", "--id", "SnapRAID.SnapRAID", "--silent", "--accept-package-agreements", "--accept-source-agreements"]
+        self.set_status("Fetching SnapRAID via Windows Package Manager...", "info")
+        self.run_cmd_thread(cmd, "Success! SnapRAID installed.")
+
 
 if __name__ == "__main__":
     if "--headless" in sys.argv:
