@@ -70,6 +70,23 @@ if errorlevel 1 (
 )
 echo  OK.
 
+REM --- 4b. Catch bugs a syntax check cannot see -----------------------
+REM  A literal %% inside a string that is then %%-formatted parses fine and
+REM  only explodes when the button is pressed. This is what broke "Turn on
+REM  phone access" in 2.0.0.
+if exist "tools\check_format_strings.py" (
+    echo  Checking format strings...
+    python tools\check_format_strings.py
+    if errorlevel 1 (
+        echo.
+        echo  ERROR: a format string would fail at runtime - see above.
+        echo         Nothing was built, and your previous exe is untouched.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+
 REM --- 5. Delete the previous build -----------------------------------
 REM  This happens BEFORE building on purpose. If a build fails, there must
 REM  be no old exe left sitting in dist\ that you could mistake for the new

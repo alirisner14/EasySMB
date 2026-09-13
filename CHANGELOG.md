@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-09-13
+### Fixed
+- **"Turn on phone access" crashed immediately** with `TypeError: must be real
+  number, not str`. The PowerShell command that stops an already-running dashboard
+  contains literal percent signs (`LIKE '%--headless%'`) and was being built with
+  %-formatting, so Python read `%--he` as a float conversion. The file parsed and
+  imported perfectly; it only failed when the button was pressed.
+- The same command could collapse into a match-everything filter if `sys.argv[0]`
+  was degenerate, which would have terminated unrelated programs. It now matches
+  nothing rather than everything in that case.
+
+### Added
+- `tools/check_format_strings.py`, run automatically by `compile.bat`, so this class
+  of runtime-only bug cannot ship again. A syntax check does not catch it.
+- Tests covering the deploy and remove paths for phone access, which had never been
+  executed — that gap is why the bug shipped.
+
 ## [2.0.0] - 2026-09-12
 
 A large release focused on one idea: **the program should never quietly do nothing.**
@@ -126,6 +143,7 @@ and every action reports itself step by step.
 - SnapRAID integration with automated Task Scheduler routines.
 - Custom error interception and plain-English troubleshooting UI.
 
+[2.0.1]: https://github.com/alirisner14/EasySMB/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/alirisner14/EasySMB/compare/v1.1.1...v2.0.0
 [1.1.1]: https://github.com/alirisner14/EasySMB/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/alirisner14/EasySMB/compare/v1.0.1...v1.1.0

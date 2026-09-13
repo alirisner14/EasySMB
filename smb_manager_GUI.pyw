@@ -18,7 +18,7 @@ import http.server
 from tkinter import filedialog, messagebox, ttk
 
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.0.1"
 
 # =========================================================================
 # SYSTEM & ADMIN HELPER FUNCTIONS
@@ -1449,9 +1449,19 @@ def headless_kill_command():
     helpers, for one), so the filter has to name this program as well.
     """
     exe = os.path.basename(os.path.abspath(sys.argv[0])).replace("'", "''")
+    if len(exe.strip(" .-")) < 3:
+        # argv[0] can be degenerate (an interactive interpreter reports "-").
+        # A near-empty name would collapse the filter to '*-*', which matches
+        # everything and would terminate unrelated software. Match nothing
+        # instead: failing to stop our own copy is recoverable, killing
+        # somebody else's editor is not.
+        exe = "EasySMB__no_such_process__"
+    # Built by concatenation on purpose. This string is full of literal % signs
+    # (PowerShell's LIKE wildcards), and %-formatting reads '%--he' as a float
+    # conversion, which threw "TypeError: must be real number, not str".
     return ("Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%--headless%'\" | "
-            "Where-Object { $_.CommandLine -like '*%s*' } | "
-            "Invoke-CimMethod -MethodName Terminate" % exe)
+            "Where-Object { $_.CommandLine -like '*" + exe + "*' } | "
+            "Invoke-CimMethod -MethodName Terminate")
 
 
 def run_headless_server():
