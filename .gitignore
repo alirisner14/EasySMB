@@ -31,6 +31,10 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# ...except ours, which is hand-edited and required to build: it is what sets
+# uac_admin=True (the administrator prompt) and the window icon. compile.bat
+# refuses to run without it.
+!smb_manager_GUI.spec
 
 # Installer logs
 pip-log.txt
