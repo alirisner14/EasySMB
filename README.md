@@ -87,8 +87,8 @@ the folders you have access to.
 
 ## Managing it from your phone
 
-On the "Manage From Your Phone" tab, set a password and press **Turn On Phone
-Access**. The last step of the report tells you the exact address to open.
+On the "Manage From Your Phone" tab, set a password and press **Activate Remote
+Dashboard**. The last step of the report tells you the exact address to open.
 
 You get two addresses, and they do the same thing:
 

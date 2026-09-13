@@ -2095,9 +2095,9 @@ If a drive dies or you accidentally delete a file:
 
         btn_row = tk.Frame(card, bg=self.palette["glass_card"])
         btn_row.pack(fill="x", pady=4)
-        FrostedGlassButton(btn_row, text="Turn On Phone Access", command=self.deploy_headless_service,
+        FrostedGlassButton(btn_row, text="Activate Remote Dashboard", command=self.deploy_headless_service,
                            width=280, height=38, radius=18, color_scheme="accent").pack(side="left", padx=(0, 12))
-        FrostedGlassButton(btn_row, text="Turn Off Phone Access", command=self.remove_headless_service,
+        FrostedGlassButton(btn_row, text="Turn Off Remote Dashboard", command=self.remove_headless_service,
                            width=220, height=38, radius=18, color_scheme="danger").pack(side="left")
 
         ts_row = tk.Frame(card, bg=self.palette["glass_card"])
@@ -2115,7 +2115,7 @@ If a drive dies or you accidentally delete a file:
                       font=("Consolas", 9), wrap="word", relief="flat", padx=12, pady=12)
         txt.insert("1.0",
                    "HOW TO USE THE WEB PORTAL\n\n"
-                   "1. Set a password and click 'Deploy Background Web Service'.\n"
+                   "1. Set a password and click 'Activate Remote Dashboard'.\n"
                    "   The steps appear in the Activity box at the bottom, and the last one tells\n"
                    "   you the exact address to open.\n\n"
                    "2. There are two addresses, and they do the same thing:\n\n"
@@ -2220,7 +2220,7 @@ If a drive dies or you accidentally delete a file:
             if not log.failed:
                 self.ent_web_pass.delete(0, tk.END)
 
-        self.run_action("Turn on phone access", worker, on_done=done)
+        self.run_action("Activate Remote Dashboard", worker, on_done=done)
 
     # =========================================================================
     # TAILSCALE SERVE  (HTTPS for the remote dashboard)
@@ -2397,7 +2397,7 @@ If a drive dies or you accidentally delete a file:
             ok, out = run_powershell(headless_kill_command())
             log.ok(step, "Done - port %d is free again." % DASHBOARD_PORT, out)
 
-        self.run_action("Turn off phone access", worker)
+        self.run_action("Turn Off Remote Dashboard", worker)
 
     # =========================================================================
     # SNAPRAID COMMAND HANDLERS
