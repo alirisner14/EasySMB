@@ -121,18 +121,29 @@ It will ask for administrator rights and relaunch itself.
 
 ## Building the .exe
 
-Double-click `compile.bat`, or:
+Double-click **`compile.bat`**. The build lands in `dist\smb_manager_GUI.exe`, and
+the `.spec` sets `uac_admin=True`, so the finished program always asks for
+administrator rights when it starts.
+
+Use the script rather than calling PyInstaller directly. Running
 
 ```cmd
 python -m PyInstaller --noconfirm --clean smb_manager_GUI.spec
 ```
 
-The build lands in `dist\smb_manager_GUI.exe`. The `.spec` sets `uac_admin=True`, so
-the finished program always asks for administrator rights when it starts.
+works when everything goes right, but **it does not delete the previous build**.
+`--clean` only clears PyInstaller's own cache. If a build fails, the old
+`dist\smb_manager_GUI.exe` is left exactly where it was, so it is easy to pick up
+last week's program thinking it is the one you just built.
 
-`compile.bat` checks that Python and PyInstaller are installed, verifies the script
-parses before starting the slow part, and stops with a readable reason if anything
-goes wrong.
+`compile.bat` avoids that, and:
+
+- deletes the previous `build\` and `dist\` before compiling, and stops with a clear
+  message if it cannot — usually because EasySMB is still running
+- checks Python and PyInstaller are installed, offering to install PyInstaller
+- verifies the script parses *before* the slow part, leaving your last working exe
+  untouched if it doesn't
+- fails with a readable reason instead of a Python traceback
 
 ## Where settings live
 

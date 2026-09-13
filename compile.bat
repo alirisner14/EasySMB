@@ -62,18 +62,43 @@ python -c "import ast,io,sys; ast.parse(io.open('smb_manager_GUI.pyw',encoding='
 if errorlevel 1 (
     echo.
     echo  ERROR: smb_manager_GUI.pyw has a syntax error - see above.
-    echo         Nothing was built.
+    echo         Nothing was built, and your previous dist\smb_manager_GUI.exe
+    echo         has been left exactly as it was.
     echo.
     pause
     exit /b 1
 )
 echo  OK.
 
-REM --- 5. Clean previous output --------------------------------------
+REM --- 5. Delete the previous build -----------------------------------
+REM  This happens BEFORE building on purpose. If a build fails, there must
+REM  be no old exe left sitting in dist\ that you could mistake for the new
+REM  one - PyInstaller leaves the previous file exactly where it was.
 echo.
-echo  Cleaning previous build...
-if exist "build" rmdir /s /q "build"
-if exist "dist"  rmdir /s /q "dist"
+echo  Deleting the previous build...
+if exist "build" rmdir /s /q "build" 2>nul
+if exist "dist"  rmdir /s /q "dist"  2>nul
+
+if exist "dist\smb_manager_GUI.exe" (
+    echo.
+    echo  ERROR: the previous smb_manager_GUI.exe could not be deleted.
+    echo         It is almost certainly still running.
+    echo.
+    echo         Close EasySMB - check the taskbar and the system tray -
+    echo         then run this again.
+    echo.
+    pause
+    exit /b 1
+)
+if exist "build" (
+    echo.
+    echo  ERROR: the build folder could not be cleared. Something has a file
+    echo         in %cd%\build open. Close it, or delete that folder yourself.
+    echo.
+    pause
+    exit /b 1
+)
+echo  OK.
 
 REM --- 6. Build -------------------------------------------------------
 echo  Building (this takes a minute)...

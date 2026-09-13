@@ -47,9 +47,12 @@ and every action reports itself step by step.
   session instead of the program silently closing. The header always shows which mode
   you are in, and actions that need administrator rights say so once, clearly, instead
   of failing eight times with "Access is denied".
-- `compile.bat` now actually builds the program. It checks Python and PyInstaller are
-  present, verifies the script parses before the slow part, and stops with a readable
-  reason instead of a wall of build output.
+- `compile.bat` now actually builds the program. It deletes the previous build first
+  (PyInstaller does not - a failed build otherwise leaves the old exe in `dist\`,
+  easy to mistake for the new one), checks Python and PyInstaller are present,
+  verifies the script parses before the slow part, and stops with a readable reason
+  instead of a Python traceback. If the previous exe cannot be deleted because it is
+  still running, it says so.
 
 ### Fixed
 - **Permissions were frequently read wrong.** The old reader matched a username
