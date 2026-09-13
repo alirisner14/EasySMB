@@ -1,31 +1,145 @@
 # Easy SMB Core
 
-A lightweight, user-friendly Windows GUI designed to make deploying a secure, private home server or NAS incredibly simple. Built with a sleek, frosted-glass aesthetic, this standalone executable replaces complex terminal commands with intuitive button clicks and includes a built-in headless web portal for remote administration.
+Turn a spare Windows PC into a private home file server — without the command line.
 
-## Key Features
+You pick a folder, tick who's allowed to open what, and press Save. Everyone in the
+house can then reach their files from a laptop, a phone or a tablet. There's also a
+web page you can open from your phone to change things later, so you don't have to
+go and sit at the server.
 
-* **Visual Security Manager (Access-Based Enumeration):** Checkboxes automatically lock down user folders and apply ABE. Users connecting to the master share will magically only see the folders they have permission to access.
-* **2-in-1 Headless Web Portal:** Deploy the app as a silent background service. It utilizes Tailscale Serve to broadcast a secure, password-protected web dashboard so you can manage permissions and run parity checks from your phone, anywhere in the world.
-* **One-Click User Creation:** Generate standard local Windows credentials dedicated strictly to network access.
-* **Tailscale Integration:** One-click engine installation and in-app remote access setup. Securely map your drives without touching your router's port-forwarding settings. 
-* **Interactive SnapRAID Dashboard:** An interactive UI to install SnapRAID, run health checks, initiate disaster recovery operations, and silently automate nightly parity backups via Windows Task Scheduler.
-* **Smart Output Interception:** If a system command fails, the UI pops up a clean terminal window detailing the raw system logs and offering plain-English troubleshooting.
+## What it does
 
-## Getting Started
+**Shows you the real permissions, always.** Every folder displays what Windows
+actually reports right now — `ON SERVER: Read Only`, `Full Control (inherited)`,
+`No Access`. Change as much as you like across as many people as you like; nothing
+is written until you press Save, and rows you've changed are marked `● UNSAVED`.
 
-1. Download the latest `smb_manager_GUI.exe` from the **Releases** section of this repository.
-2. Place the executable in your desired permanent folder (alongside your `app_icon.ico` logo for custom branding).
-3. Right-click the `.exe` and select **Run as Administrator** (required for assigning folder permissions, editing the hosts file, and scheduling tasks).
-4. Follow the numbered tabs across the top to build your local server, set up remote access, and configure your parity protection.
+**Tells you whether the save worked.** After saving, every rule is read back off the
+folder and you get a pass/fail report. Windows tools routinely report success while
+changing nothing — this catches that.
 
-## Running from Source
+```
+  ✓  1. Read the current share list
+  ✓  5. Lock down Family_Shared
+  ✗  8. Publish share 'Resources'
+        The command reported an error.
+        | New-SmbShare : Access is denied.
+  ✗  7 ok, 3 failed, 1 skipped
+```
 
-1. Clone this repository to your local machine.
-2. Ensure Python 3.x is installed.
-3. Run the script:
-   ```cmd
-   python smb_manager_GUI.pyw
+**Every action reports itself step by step.** There's an Activity box along the
+bottom. Each step announces itself, then turns into a tick or a cross with the real
+error text attached. If something fails you're told which step, and what it said.
 
-## Compiling your own standalone .EXE
-pip install pyinstaller
-python -m PyInstaller --noconsole --onefile --uac-admin --icon=app_icon.ico smb_manager_GUI.pyw
+**Fixes the "why do I see everything twice on my phone?" problem.** Tapping a server
+from a phone shows its *share list*, not its folder tree. Share the parent folder as
+well as its children and every folder shows up twice. There's a button that explains
+what your server currently looks like from outside, in plain words, and a setting to
+publish your top-level folders directly so there's no wrapper folder to tap through.
+
+**Hides accounts that aren't people.** The PC's own sign-in account, service
+accounts — untick them and they stop appearing in the permissions list. Windows
+built-ins (Administrator, Guest, DefaultAccount) are hidden automatically.
+
+**Manage it from your phone.** A password-protected web dashboard, optionally behind
+a real HTTPS certificate via Tailscale. Changes made there are applied immediately —
+same commands, same read-back check.
+
+**Protects against a dead hard drive.** SnapRAID install, health checks, recovery,
+and a nightly automatic backup job.
+
+## Getting started
+
+1. Download `smb_manager_GUI.exe` from [Releases](https://github.com/alirisner14/EasySMB/releases).
+2. Put it in a permanent folder.
+3. Double-click it. Windows asks for administrator permission — say yes. It needs
+   that to change folder permissions and publish shares.
+4. Work through the tabs left to right. The steps are numbered 1 to 6.
+
+If you say no to the administrator prompt, the app offers to open in view-only mode
+so you can still look at everyone's permissions without changing anything. The header
+tells you which mode you're in.
+
+## The six steps
+
+| Step | Tab | What you do |
+|-----|-----|-----|
+| 1 | People | Make a Windows account for each person, and untick any account that isn't a real user |
+| 2 | Folders & Access | Pick the main folder everything lives in |
+| 3 | Folders & Access | Create the folder layout, or scan the one you already have |
+| 4 | Folders & Access | Tick who can open, add to, and delete from each folder |
+| 5 | Folders & Access | Choose what people see when they tap your server, and apply it |
+| 6 | Server Name | Give the server a friendly name instead of an IP address |
+
+## Opening your files from another device
+
+**Windows:** In File Explorer's address bar, type `\\` followed by the server's IP —
+for example `\\192.168.1.50`.
+
+**Mac:** Finder → Go → Connect to Server → `smb://192.168.1.50`
+
+**iPhone / iPad:** Files app → Browse → ⋯ → Connect to Server → `smb://192.168.1.50`
+
+**Android:** Most file managers have a "Network" or "SMB" option.
+
+Sign in with the Windows username and password you made in Step 1. You'll only see
+the folders you have access to.
+
+## Managing it from your phone
+
+On the "Manage From Your Phone" tab, set a password and press **Turn On Phone
+Access**. The last step of the report tells you the exact address to open.
+
+You get two addresses, and they do the same thing:
+
+- On your home network: `http://<server-ip>:50505`
+- From anywhere, via Tailscale: `https://<pc-name>.<your-tailnet>.ts.net`
+
+The Tailscale one is worth turning on. Over plain `http://` your dashboard password
+travels in a form anyone sharing your network can read; Tailscale puts a real HTTPS
+certificate in front of it. It uses `tailscale serve`, which is private to your own
+devices — never `tailscale funnel`, which would put it on the public internet.
+
+The dashboard's username is `admin` and the password is the one you set.
+
+## Reaching it away from home
+
+The "Use It Away From Home" tab installs [Tailscale](https://tailscale.com), which
+links your devices together privately without touching your router's port
+forwarding. Install it, sign in on the server and on your phone, and the server is
+reachable from anywhere.
+
+## Running from source
+
+Requires Python 3.8+ on Windows.
+
+```cmd
+python smb_manager_GUI.pyw
+```
+
+It will ask for administrator rights and relaunch itself.
+
+## Building the .exe
+
+Double-click `compile.bat`, or:
+
+```cmd
+python -m PyInstaller --noconfirm --clean smb_manager_GUI.spec
+```
+
+The build lands in `dist\smb_manager_GUI.exe`. The `.spec` sets `uac_admin=True`, so
+the finished program always asks for administrator rights when it starts.
+
+`compile.bat` checks that Python and PyInstaller are installed, verifies the script
+parses before starting the slow part, and stops with a readable reason if anything
+goes wrong.
+
+## Where settings live
+
+`easynas_config.json`, next to the program. It holds your main folder, the accounts
+you've hidden, the share layout, and the dashboard password. Copy it alongside the
+`.exe` if you move an existing setup.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
