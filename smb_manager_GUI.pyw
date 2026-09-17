@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -18,7 +19,8 @@ import http.server
 from tkinter import filedialog, messagebox, ttk
 
 
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.1.0"
+NO_FOLDER_CHOSEN = "(scan your folders first)"
 
 # =========================================================================
 # SYSTEM & ADMIN HELPER FUNCTIONS
@@ -125,6 +127,10 @@ CONFIG_DEFAULTS = {
     # "folders" = publish each top-level folder, so tapping the server goes
     # straight to Users / Family_Shared / Resources with no wrapper folder.
     "share_mode": "folders",
+    # Folder on a second drive that finished folders get moved to. Kept
+    # out of the share list on purpose - it is an administrator holding
+    # area, not something the family browses.
+    "archive_dir": "",
 }
 
 
@@ -770,6 +776,293 @@ def share_exists(name):
 
 
 # =========================================================================
+# ARCHIVING TO A SECOND DRIVE
+#
+# Moving a folder to another drive is the only thing this app does that can
+# destroy data, so it is never a "move". It copies, checks the copy really
+# arrived, and only then deletes the original. If anything looks wrong the
+# original is still sitting there untouched.
+#
+# Permissions do not survive a cross-drive move on their own: Windows treats
+# it as a copy plus a delete, and the new files inherit the destination's
+# rules. robocopy /SEC carries the real permissions across. (/COPYALL also
+# copies audit settings and fails without the "Manage Auditing" right.)
+# =========================================================================
+SNAPRAID_CONF_PATHS = [
+    r"C:\SnapRAID\snapraid.conf",
+    r"C:\snapraid.conf",
+    r"C:\Program Files\SnapRAID\snapraid.conf",
+]
+
+
+def read_snapraid_conf():
+    """Which drives hold parity, and which hold data. -> (parity, data, path)"""
+    for conf in SNAPRAID_CONF_PATHS:
+        if not os.path.exists(conf):
+            continue
+        parity, data = [], []
+        try:
+            with io.open(conf, "r", encoding="utf-8", errors="replace") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split(None, 1)
+                    if len(parts) != 2:
+                        continue
+                    key, value = parts[0].lower(), parts[1].strip()
+                    if key in ("parity", "2-parity", "z-parity", "3-parity",
+                               "4-parity", "5-parity", "6-parity"):
+                        parity.append(value)
+                    elif key in ("disk", "data"):
+                        # "data d1 D:\..."  or  "disk d1 D:\..."
+                        bits = value.split(None, 1)
+                        data.append(bits[1].strip() if len(bits) == 2 else value)
+        except Exception:
+            continue
+        return parity, data, conf
+    return [], [], ""
+
+
+def _drive_of(path):
+    try:
+        return os.path.splitdrive(os.path.abspath(path))[0].rstrip("\\/").upper()
+    except Exception:
+        return ""
+
+
+def snapraid_role_of(path):
+    """Is this path on a parity drive, a data drive, or outside the array?
+
+    Returns (role, detail) where role is 'parity', 'data', 'outside' or 'unknown'.
+    """
+    parity, data, conf = read_snapraid_conf()
+    if not conf:
+        return "unknown", "No snapraid.conf found, so parity protection could not be checked."
+    drive = _drive_of(path)
+    for p in parity:
+        if _drive_of(p) == drive:
+            return "parity", ("%s is the SnapRAID PARITY drive (%s in %s)." % (drive, p, conf))
+    for d in data:
+        if _drive_of(d) == drive:
+            return "data", ("%s is a SnapRAID data drive, so archived files stay protected "
+                            "once parity is synced." % drive)
+    return "outside", ("%s is not listed in %s, so anything archived there has no parity "
+                       "protection." % (drive, conf))
+
+
+def folder_stats(path):
+    """(file_count, total_bytes, error) for a folder tree."""
+    count, total = 0, 0
+    try:
+        for dirpath, _dirs, files in os.walk(path):
+            for name in files:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, name))
+                    count += 1
+                except OSError:
+                    pass
+    except Exception as e:
+        return 0, 0, str(e)
+    return count, total, ""
+
+
+def free_space(path):
+    """Bytes free on the volume holding path. -> (bytes, error)"""
+    try:
+        drive = os.path.splitdrive(os.path.abspath(path))[0] or path
+        free = ctypes.c_ulonglong(0)
+        ok = ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+            ctypes.c_wchar_p(drive + "\\"), None, None, ctypes.byref(free))
+        if not ok:
+            return 0, "Windows would not report the free space on %s." % drive
+        return free.value, ""
+    except Exception as e:
+        return 0, str(e)
+
+
+def human_size(n):
+    for unit in ("bytes", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return "%.0f %s" % (n, unit) if unit == "bytes" else "%.1f %s" % (n, unit)
+        n /= 1024.0
+    return "%.1f TB" % n
+
+
+def archive_destination(source, archive_dir):
+    """Where a folder should land, never overwriting an existing archive."""
+    name = os.path.basename(os.path.normpath(source)) or "Archived"
+    candidate = os.path.join(archive_dir, name)
+    if not os.path.exists(candidate):
+        return candidate
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d")
+    candidate = os.path.join(archive_dir, "%s (%s)" % (name, stamp))
+    n = 2
+    while os.path.exists(candidate):
+        candidate = os.path.join(archive_dir, "%s (%s) %d" % (name, stamp, n))
+        n += 1
+    return candidate
+
+
+def check_archive_request(source, archive_dir, root_dir):
+    """Every reason this move must not happen. -> list of problems (empty = ok)"""
+    problems = []
+    if not archive_dir:
+        return ["No archive drive has been set yet."]
+    if not os.path.isdir(archive_dir):
+        problems.append("The archive folder %s does not exist." % archive_dir)
+    if not os.path.isdir(source):
+        problems.append("The folder %s is not there any more." % source)
+    if problems:
+        return problems
+
+    src_n, arc_n, root_n = _norm(source), _norm(archive_dir), _norm(root_dir or "")
+
+    if src_n == root_n:
+        problems.append("That is the main server folder itself. Archive the folders inside "
+                        "it, not the whole thing.")
+    if root_n and not is_under_root(source, root_dir):
+        problems.append("%s is outside your main server folder, so this app will not move it."
+                        % source)
+    if arc_n == src_n:
+        problems.append("The folder and the archive are the same place.")
+    if root_n and is_under_root(archive_dir, root_dir):
+        problems.append("The archive folder is inside your main server folder (%s). Archiving "
+                        "there would just move files around the same drive and would still be "
+                        "shared on the network." % root_dir)
+    if src_n.startswith(arc_n + os.sep.lower()):
+        problems.append("That folder is already inside the archive.")
+    if arc_n.startswith(src_n + os.sep.lower()):
+        problems.append("The archive folder lives inside the folder you are archiving, which "
+                        "would copy it into itself.")
+
+    role, detail = snapraid_role_of(archive_dir)
+    if role == "parity":
+        problems.append("REFUSED: %s Putting files on the parity drive breaks the protection "
+                        "for every other drive." % detail)
+    return problems
+
+
+def robocopy_archive(source, dest):
+    """Copy a folder tree, permissions included. -> (ok, output)
+
+    robocopy exit codes below 8 are success; 8 and above are real failures.
+    /SEC carries the permissions; /COPYALL would also try to copy audit
+    settings and fails without the "Manage Auditing" user right.
+    """
+    cmd = ['robocopy', source, dest, '/E', '/SEC', '/R:1', '/W:1', '/NP', '/NDL']
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True,
+                             creationflags=subprocess.CREATE_NO_WINDOW)
+        out = ((res.stdout or "") + (res.stderr or "")).strip()
+        return res.returncode < 8, "robocopy exit %d\n%s" % (res.returncode, out[-2000:])
+    except Exception as e:
+        return False, "robocopy could not be started: %s" % e
+
+
+def verify_archive_copy(source, dest):
+    """Did everything actually arrive? -> (ok, detail)"""
+    s_count, s_bytes, s_err = folder_stats(source)
+    d_count, d_bytes, d_err = folder_stats(dest)
+    if s_err or d_err:
+        return False, "Could not measure the folders: %s" % (s_err or d_err)
+    if s_count != d_count:
+        return False, ("The copy has %d files but the original has %d. Nothing has been "
+                       "deleted." % (d_count, s_count))
+    if s_bytes != d_bytes:
+        return False, ("The copy is %s but the original is %s. Nothing has been deleted."
+                       % (human_size(d_bytes), human_size(s_bytes)))
+    return True, "%d files, %s - matches the original exactly." % (d_count, human_size(d_bytes))
+
+
+def perform_archive(log, source, archive_dir, root_dir, status_cb=None):
+    step = log.begin("Check this move is safe")
+    problems = check_archive_request(source, archive_dir, root_dir)
+    if problems:
+        log.fail(step, "\n".join(problems))
+        log.skip_rest("Nothing was copied and nothing was deleted.")
+        return False
+    role, detail = snapraid_role_of(archive_dir)
+    log.ok(step, detail)
+
+    step = log.begin("Measure %s" % os.path.basename(source))
+    count, size, err = folder_stats(source)
+    if err:
+        log.fail(step, "Could not read the folder.", err)
+        return False
+    if count == 0:
+        log.skip(step, "That folder has no files in it - nothing to archive.")
+        return False
+    log.ok(step, "%d files, %s" % (count, human_size(size)))
+
+    step = log.begin("Check the archive drive has room")
+    free, err = free_space(archive_dir)
+    if err:
+        log.fail(step, "Could not check the free space.", err)
+        return False
+    if free < size * 1.05:
+        log.fail(step, "Only %s free on the archive drive, and this folder is %s. "
+                       "Free some space first." % (human_size(free), human_size(size)))
+        return False
+    log.ok(step, "%s free, need about %s." % (human_size(free), human_size(size)))
+
+    dest = archive_destination(source, archive_dir)
+    step = log.begin("Copy to %s" % dest)
+    if status_cb:
+        status_cb("Copying %s (%s). Large folders take a while..."
+                  % (os.path.basename(source), human_size(size)))
+    ok, out = robocopy_archive(source, dest)
+    if not ok:
+        log.fail(step, "The copy did not finish. The original folder has not been "
+                       "touched.", out)
+        log.skip_rest("Nothing was deleted.")
+        return False
+    log.ok(step, "Copied with permissions intact (robocopy /SEC).", out)
+
+    step = log.begin("Check every file arrived")
+    ok, detail = verify_archive_copy(source, dest)
+    if not ok:
+        log.fail(step, detail + "\nThe copy is at %s - compare them yourself before "
+                                "deleting anything." % dest)
+        log.skip_rest("The original folder is still exactly where it was.")
+        return False
+    log.ok(step, detail)
+
+    step = log.begin("Lock the archived copy to administrators")
+    ok, out = run_console('icacls "%s" /inheritance:r /grant:r "Administrators":(OI)(CI)F'
+                          % dest)
+    if ok:
+        log.ok(step, "Only administrators can open it. It is not shared on the network.")
+    else:
+        log.fail(step, "The files are safely copied, but the permissions could not be set. "
+                       "Set them yourself before deleting the original.", out)
+        log.skip_rest("The original folder has been left in place.")
+        return False
+
+    step = log.begin("Delete the original now the copy is confirmed")
+    try:
+        shutil.rmtree(source)
+    except Exception as e:
+        log.fail(step, "The archive copy is complete and verified, but the original could "
+                       "not be deleted. Delete %s yourself when nothing is using it."
+                 % source, str(e))
+        return False
+    if os.path.exists(source):
+        log.fail(step, "Windows reported no error but %s is still there." % source)
+        return False
+    log.ok(step, "Freed %s on the main drive." % human_size(size))
+
+    if role == "data":
+        log.note("Parity is now out of date",
+                 "The files moved, so SnapRAID's parity no longer matches. Run 'Update The "
+                 "Backup Copy' on the drive-failure tab to bring it back up to date.")
+    elif role == "outside":
+        log.note("These files are no longer protected by parity",
+                 "The archive drive is not part of your SnapRAID array.")
+    return True
+
+
+# =========================================================================
 # TAILSCALE SERVE
 #
 # The dashboard already binds 0.0.0.0, so it is reachable at
@@ -832,6 +1125,79 @@ def tailscale_serving_port(exe, port=DASHBOARD_PORT):
         return False, out
     serving = ("localhost:%d" % port) in out or ("127.0.0.1:%d" % port) in out
     return serving, out
+
+
+# =========================================================================
+# ARCHIVE JOBS STARTED FROM THE DASHBOARD
+# Copying a big folder takes minutes, and a phone browser will give up long
+# before it finishes. So the request starts the job and returns immediately;
+# the page then asks how it is going every couple of seconds.
+# =========================================================================
+ARCHIVE_JOB = {"running": False, "title": "", "steps": [], "report": "",
+               "note": "", "started": "", "ok": None}
+ARCHIVE_JOB_LOCK = threading.Lock()
+
+
+def archive_job_snapshot():
+    with ARCHIVE_JOB_LOCK:
+        return {
+            "running": ARCHIVE_JOB["running"],
+            "title": ARCHIVE_JOB["title"],
+            "started": ARCHIVE_JOB["started"],
+            "note": ARCHIVE_JOB["note"],
+            "ok": ARCHIVE_JOB["ok"],
+            "report": ARCHIVE_JOB["report"],
+            "steps": [dict(s) for s in ARCHIVE_JOB["steps"]],
+        }
+
+
+def start_archive_job(source, archive_dir, root_dir):
+    """Kick off an archive in the background. -> (started, why_not)"""
+    with ARCHIVE_JOB_LOCK:
+        if ARCHIVE_JOB["running"]:
+            return False, "An archive job is already running. Wait for it to finish."
+        ARCHIVE_JOB.update({
+            "running": True, "title": "Archiving %s" % os.path.basename(source),
+            "steps": [], "report": "", "note": "", "ok": None,
+            "started": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+
+    def on_step(log, _step):
+        with ARCHIVE_JOB_LOCK:
+            ARCHIVE_JOB["steps"] = [dict(s) for s in log.steps]
+
+    def work():
+        log = ActionLog("Archiving %s" % os.path.basename(source), notify=on_step)
+        try:
+            ok = perform_archive(log, source, archive_dir, root_dir,
+                                 status_cb=lambda m: _archive_note(m))
+        except Exception:
+            ok = False
+            log.fail(log.begin("Unexpected error"),
+                     "The job stopped early. Nothing was deleted unless a step above says so.",
+                     traceback.format_exc())
+        log.finished = datetime.datetime.now()
+        with ARCHIVE_JOB_LOCK:
+            ARCHIVE_JOB["running"] = False
+            ARCHIVE_JOB["ok"] = bool(ok)
+            ARCHIVE_JOB["steps"] = [dict(s) for s in log.steps]
+            ARCHIVE_JOB["report"] = log.report()
+            ARCHIVE_JOB["note"] = ""
+
+    threading.Thread(target=work, daemon=True).start()
+    return True, ""
+
+
+def _archive_note(message):
+    with ARCHIVE_JOB_LOCK:
+        ARCHIVE_JOB["note"] = message
+
+
+def archivable_folders(root_dir):
+    """Top-level folders of the server that it makes sense to archive."""
+    if not root_dir or not os.path.isdir(root_dir):
+        return []
+    return [f for f in list_managed_folders(root_dir) if _norm(f) != _norm(root_dir)]
 
 
 # =========================================================================
@@ -904,6 +1270,31 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(payload).encode("utf-8"))
             return
 
+        # HOW IS THE ARCHIVE JOB GOING?
+        if parsed.path == "/api/archive_status":
+            cfg = load_config()
+            payload = archive_job_snapshot()
+            archive_dir = cfg.get("archive_dir", "")
+            payload["archive_dir"] = archive_dir
+            payload["folders"] = archivable_folders(cfg.get("root_dir", ""))
+            if archive_dir and os.path.isdir(archive_dir):
+                free, err = free_space(archive_dir)
+                role, detail = snapraid_role_of(archive_dir)
+                payload["archive_ready"] = True
+                payload["archive_note"] = "%s free.  %s" % (
+                    human_size(free) if not err else "Free space unknown", detail)
+                payload["archive_role"] = role
+            else:
+                payload["archive_ready"] = False
+                payload["archive_note"] = ("No archive drive has been set. Choose one in the "
+                                           "desktop app on the 'Archive Old Files' tab.")
+                payload["archive_role"] = "none"
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+            return
+
         # WHAT THE NETWORK SEES - the share layout, explained
         if parsed.path == "/api/network_view":
             root_dir = load_config().get("root_dir", "")
@@ -969,6 +1360,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         <html>
         <head>
         <title>EasyNAS Dashboard</title>
+        <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
           :root {{
@@ -1048,6 +1440,11 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             event.currentTarget.classList.add('active');
           }}
           
+          // A backslash, built from its character code. Writing one literally
+          // here means escaping it for Python's f-string AND for the JavaScript
+          // string, and getting that wrong once broke every button on the page.
+          const BS = String.fromCharCode(92);
+
           const LEVEL_TEXT = {{
             "F": "Full Control", "M": "Read / Write / Delete", "C": "Read + Add Files",
             "RX": "Read Only", "REMOVE": "No Access", "OTHER": "Custom", "ERROR": "Unreadable"
@@ -1144,7 +1541,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                   let h = '<table class="matrix"><thead><tr><th>Tap this</th><th>Opens this folder</th>'
                         + '<th>Hides what you cannot open</th></tr></thead><tbody>';
                   d.shares.forEach(sh => {{
-                    h += '<tr><th>\\\\server\\' + sh.name + '</th><td>' + sh.path + '</td><td>'
+                    h += '<tr><th>' + BS + BS + 'server' + BS + sh.name + '</th><td>' + sh.path + '</td><td>'
                        + (sh.abe ? '<span class="pill lvl-F">yes</span>'
                                  : '<span class="pill lvl-DENY">no</span>') + '</td></tr>';
                   }});
@@ -1156,12 +1553,70 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
               .catch(e => {{ list.innerHTML = '<p class="muted">Could not reach the server.</p>'; }});
           }}
 
+          const STEP_MARK = {{running: "\u2026", ok: "OK", fail: "FAILED", skip: "skipped"}};
+
+          function confirmArchive() {{
+            const f = document.getElementById('archive-folder').value;
+            if (!f) {{ alert("Pick a folder first."); return false; }}
+            return confirm("Move this folder to the archive drive?\\n\\n" + f +
+              "\\n\\nIt is copied and checked before the original is deleted.");
+          }}
+
+          function loadArchive() {{
+            fetch('/api/archive_status')
+              .then(r => r.json())
+              .then(d => {{
+                const note = document.getElementById('archive-note');
+                const sel = document.getElementById('archive-folder');
+                const btn = document.getElementById('archive-btn');
+                const prog = document.getElementById('archive-progress');
+                if (!note) return;
+
+                note.className = 'current-perm' + (d.archive_ready ? '' : ' bad');
+                note.textContent = d.archive_note;
+
+                if (sel && sel.options.length !== d.folders.length) {{
+                  const keep = sel.value;
+                  sel.innerHTML = '';
+                  d.folders.forEach(f => {{
+                    const o = document.createElement('option');
+                    o.value = f; o.textContent = f;
+                    sel.appendChild(o);
+                  }});
+                  if (keep) sel.value = keep;
+                }}
+
+                btn.disabled = d.running || !d.archive_ready;
+                btn.textContent = d.running ? "Archiving..." : "Archive This Folder";
+
+                if (d.steps && d.steps.length) {{
+                  let lines = [d.title + "   (started " + d.started + ")", ""];
+                  d.steps.forEach(s => {{
+                    lines.push("[" + (STEP_MARK[s.status] || s.status) + "]  " + s.label);
+                    if (s.detail) s.detail.split("\\n").forEach(l => lines.push("        " + l));
+                  }});
+                  if (d.note) lines.push("", d.note);
+                  if (!d.running && d.ok !== null) {{
+                    lines.push("", d.ok ? "Finished." : "Did not finish - see above.");
+                  }}
+                  prog.textContent = lines.join("\\n");
+                  prog.className = (!d.running && d.ok === false) ? 'report bad' : 'report';
+                }} else {{
+                  prog.textContent = d.running ? "Starting..." : "Nothing running.";
+                }}
+
+                if (d.running) setTimeout(loadArchive, 2000);
+              }})
+              .catch(e => {{ setTimeout(loadArchive, 5000); }});
+          }}
+
           document.addEventListener("DOMContentLoaded", () => {{
             document.querySelector('[name="user"]').addEventListener('change', syncPermissions);
             document.querySelector('[name="folder"]').addEventListener('change', syncPermissions);
             syncPermissions();
             loadMatrix();
             loadNetworkView();
+            loadArchive();
           }});
         </script>
         </head>
@@ -1177,6 +1632,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
            <button class="tab-btn active" onclick="openTab('setup')">✦ Users & Folders</button>
            <button class="tab-btn" onclick="openTab('perms')">🔒 Security Rules</button>
            <button class="tab-btn" onclick="openTab('shares')">📡 Network Shares</button>
+           <button class="tab-btn" onclick="openTab('archive')">📦 Archive</button>
            <button class="tab-btn" onclick="openTab('snapraid')">⛁ SnapRAID</button>
         </div>
         
@@ -1283,6 +1739,30 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             </div>
         </div>
 
+        <!-- TAB: ARCHIVE -->
+        <div id="archive" class="tab-content">
+            <div class="card">
+                <h3>Move A Folder To The Archive Drive</h3>
+                <p style="font-size: 13px; color: var(--text-muted); margin-top: -10px;">
+                  The folder is copied to your archive drive, every file is checked against the
+                  original, and only then is the original deleted. If anything does not match,
+                  nothing is removed.
+                </p>
+                <div id="archive-note" class="current-perm">Checking the archive drive…</div>
+                <form method="POST" action="/archive" onsubmit="return confirmArchive()">
+                    <div class="form-group">
+                        <label>Folder to archive:</label>
+                        <select name="folder" id="archive-folder"></select>
+                    </div>
+                    <button type="submit" id="archive-btn" class="action-btn">Archive This Folder</button>
+                </form>
+            </div>
+            <div class="card">
+                <h3>Progress</h3>
+                <pre id="archive-progress" class="report">Nothing running.</pre>
+            </div>
+        </div>
+
         <!-- TAB 3: SNAPRAID -->
         <div id="snapraid" class="tab-content">
             <div class="card">
@@ -1309,7 +1789,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         </html>
         """
         self.send_response(200)
-        self.send_header("Content-type", "text/html")
+        self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(html.encode("utf-8"))
 
@@ -1380,6 +1860,31 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                 except Exception as e:
                     output = "FAILED - %s" % e
 
+        elif parsed.path == "/archive":
+            title = "Archive Log"
+            cfg = load_config()
+            source = post_qs.get("folder", [""])[0]
+            archive_dir = cfg.get("archive_dir", "")
+            root_dir = cfg.get("root_dir", "")
+
+            problems = check_archive_request(source, archive_dir, root_dir)
+            if not source:
+                output = "No folder was chosen."
+            elif problems:
+                output = ("This move was refused before anything was copied:\n\n  - "
+                          + "\n  - ".join(problems))
+            else:
+                started, why_not = start_archive_job(source, archive_dir, root_dir)
+                if started:
+                    count, size, _e = folder_stats(source)
+                    output = ("Started archiving %s (%d files, %s).\n\n"
+                              "It is copied first, checked file by file, and only then is the\n"
+                              "original deleted. You can close this page - the job keeps running.\n\n"
+                              "The Archive tab shows progress."
+                              % (source, count, human_size(size)))
+                else:
+                    output = why_not
+
         elif parsed.path == "/create_user":
             title = "User Creation Log"
             username = post_qs.get("username", [""])[0].strip()
@@ -1417,6 +1922,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         <html>
         <head>
         <title>{title}</title>
+        <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
           body {{ font-family: 'Segoe UI', system-ui, sans-serif; background: #161719; color: #e5e7eb; padding: 30px 20px; text-align: center; }}
@@ -1437,7 +1943,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         </html>
         """
         self.send_response(200)
-        self.send_header("Content-type", "text/html")
+        self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(html.encode("utf-8"))
 
@@ -1633,15 +2139,18 @@ class GlassSMBManagerApp:
         self.tab_tailscale = tk.Frame(self.notebook, bg=self.palette["bg_tint"])
         self.tab_snapraid = tk.Frame(self.notebook, bg=self.palette["bg_tint"])
         self.tab_web = tk.Frame(self.notebook, bg=self.palette["bg_tint"])
+        self.tab_archive = tk.Frame(self.notebook, bg=self.palette["bg_tint"])
 
         self.notebook.add(self.tab_smb, text="  ✦ People & Folders  ")
         self.notebook.add(self.tab_tailscale, text="  ☁ Use It Away From Home  ")
         self.notebook.add(self.tab_snapraid, text="  ⛁ Protect Against Drive Failure  ")
+        self.notebook.add(self.tab_archive, text="  📦 Archive Old Files  ")
         self.notebook.add(self.tab_web, text="  🌐 Manage From Your Phone  ")
 
         self.build_smb_vertical_workflow()
         self.build_tailscale_tab()
         self.build_snapraid_tab()
+        self.build_archive_tab()
         self.build_web_tab()
         self.build_activity_log()
         self.build_status_bar()
@@ -2062,6 +2571,96 @@ If a drive dies or you accidentally delete a file:
         txt.insert("1.0", guide_content)
         txt.config(state="disabled")
 
+    def build_archive_tab(self):
+        panel = tk.Frame(self.tab_archive, bg=self.palette["bg_tint"])
+        panel.pack(fill="both", expand=True, pady=6)
+
+        drive_rim, drive_card = self.create_glass_card(panel, title="Your Archive Drive")
+        drive_rim.pack(fill="x", pady=(0, 6))
+        tk.Label(drive_card,
+                 text=("Somewhere on a second drive to park folders you want off the main drive but\n"
+                       "do not want to lose. Only administrators can open it, and it is never shared\n"
+                       "on the network, so nobody can delete an archived folder from their phone."),
+                 bg=self.palette["glass_card"], fg=self.palette["text_frost"],
+                 font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 10))
+
+        row = tk.Frame(drive_card, bg=self.palette["glass_card"])
+        row.pack(fill="x", pady=2)
+        _, self.ent_archive_dir = self.create_glass_entry(row, width=54)
+        self.ent_archive_dir.master.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.ent_archive_dir.insert(0, load_config().get("archive_dir", ""))
+        FrostedGlassButton(row, text="Browse...", command=self.browse_archive_dir,
+                           width=100, height=32, radius=14, color_scheme="neutral").pack(side="right")
+
+        self.lbl_archive_status = tk.Label(drive_card, text="", bg=self.palette["glass_card"],
+                                           fg=self.palette["text_muted"], font=("Segoe UI", 9),
+                                           anchor="w", justify="left", wraplength=780)
+        self.lbl_archive_status.pack(fill="x", pady=(8, 0))
+
+        move_rim, move_card = self.create_glass_card(panel, title="Move A Folder To The Archive")
+        move_rim.pack(fill="x", pady=6)
+
+        tk.Label(move_card, text="Folder to archive:", bg=self.palette["glass_card"],
+                 fg=self.palette["text_muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        self.var_archive_source = tk.StringVar(value=NO_FOLDER_CHOSEN)
+        self.cmb_archive_source = ttk.Combobox(move_card, textvariable=self.var_archive_source,
+                                               state="readonly", width=70,
+                                               values=[NO_FOLDER_CHOSEN])
+        self.cmb_archive_source.pack(anchor="w", pady=(4, 10), fill="x")
+
+        tk.Label(move_card,
+                 text=("What happens when you press the button:\n"
+                       "   1.  The folder is measured, and the archive drive is checked for room.\n"
+                       "   2.  It is COPIED across, keeping each person's permissions.\n"
+                       "   3.  Every file is counted and sized against the original.\n"
+                       "   4.  Only once that matches exactly is the original deleted.\n\n"
+                       "If anything goes wrong at any point, the original folder stays exactly where\n"
+                       "it is and you are told what happened."),
+                 bg=self.palette["glass_card"], fg=self.palette["text_muted"],
+                 font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 10))
+
+        brow = tk.Frame(move_card, bg=self.palette["glass_card"])
+        brow.pack(fill="x")
+        FrostedGlassButton(brow, text="↺ Refresh Folder List",
+                           command=self.refresh_archive_sources,
+                           width=190, height=34, radius=16, color_scheme="neutral").pack(side="left")
+        FrostedGlassButton(brow, text="\U0001F4E6 Archive This Folder",
+                           command=self.archive_selected_folder,
+                           width=220, height=38, radius=18, color_scheme="accent").pack(side="right")
+
+        note_rim, note_card = self.create_glass_card(panel, title="Worth Knowing")
+        note_rim.pack(fill="both", expand=True, pady=(6, 0))
+        txt = tk.Text(note_card, bg=self.palette["well_bg"], fg=self.palette["text_frost"],
+                      font=("Consolas", 9), wrap="word", relief="flat", padx=12, pady=12)
+        txt.insert("1.0",
+                   "PERMISSIONS\n\n"
+                   "Moving a folder within one drive keeps its permissions automatically. Moving it\n"
+                   "to a DIFFERENT drive does not - Windows treats that as a copy and a delete, so\n"
+                   "the files arrive with whatever the destination folder says. This app copies with\n"
+                   "robocopy /SEC, which carries the real permissions across.\n\n"
+                   "(The flag usually recommended for this, /COPYALL, also tries to copy audit\n"
+                   "settings and fails with 'You do not have the Manage Auditing user right'.)\n\n"
+                   "SNAPRAID\n\n"
+                   "If your archive drive is part of the SnapRAID array, archived files stay\n"
+                   "protected - but parity does not match until you sync. After archiving, go to\n"
+                   "'Protect Against Drive Failure' and press 'Update The Backup Copy'.\n\n"
+                   "If the archive drive is NOT in the array, archived files have no parity\n"
+                   "protection at all. This tab tells you which is the case.\n\n"
+                   "Archiving to the PARITY drive is refused outright. Files there would break the\n"
+                   "protection for every other drive.\n\n"
+                   "GETTING SOMETHING BACK\n\n"
+                   "Archived folders are plain folders. Copy one back to the server folder in File\n"
+                   "Explorer, then press 'Create / Find Folders' on the People & Folders tab so it\n"
+                   "reappears in the permissions list.")
+        txt.config(state="disabled")
+        scroll = ttk.Scrollbar(note_card, orient="vertical", command=txt.yview,
+                               style="Vertical.TScrollbar")
+        txt.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True)
+
+        self.refresh_archive_status()
+
     def build_web_tab(self):
         panel = tk.Frame(self.tab_web, bg=self.palette["bg_tint"])
         panel.pack(fill="both", expand=True, pady=6)
@@ -2346,6 +2945,101 @@ If a drive dies or you accidentally delete a file:
             log.ok(step, "\n".join(lines), "Raw 'tailscale serve status':\n%s" % (raw or "(no output)"))
 
         self.run_action("Check remote access", worker, popup_on_success=True, needs_admin=False)
+
+    # =========================================================================
+    # ARCHIVE A FOLDER TO THE SECOND DRIVE
+    # Copy, check it arrived, and only then delete. Never a raw move.
+    # =========================================================================
+    def archive_folder_steps(self, log, source, archive_dir, root_dir):
+        return perform_archive(
+            log, source, archive_dir, root_dir,
+            status_cb=lambda msg: self.root.after(0, lambda: self.set_status(msg, "info")))
+
+    def archive_selected_folder(self):
+        source = self.var_archive_source.get().strip()
+        archive_dir = self.ent_archive_dir.get().strip()
+        root_dir = self.ent_nas_root.get().strip()
+
+        if not source or source == NO_FOLDER_CHOSEN:
+            messagebox.showerror("Pick a folder", "Choose the folder you want to archive.")
+            return
+        if not archive_dir:
+            messagebox.showerror("Pick the archive drive",
+                                 "Choose the folder on your archive drive first.")
+            return
+
+        count, size, _err = folder_stats(source)
+        if not messagebox.askyesno(
+                "Move this folder to the archive drive?",
+                "%s\n\n%d files, %s\n\nIt will be copied to:\n%s\n\n"
+                "The copy is checked file by file before the original is deleted. "
+                "Nothing is removed until the copy is confirmed.\n\nGo ahead?"
+                % (source, count, human_size(size),
+                   archive_destination(source, archive_dir))):
+            return
+
+        def worker(log):
+            self.archive_folder_steps(log, source, archive_dir, root_dir)
+
+        def done(_log):
+            self.scan_or_populate_folders()
+            self.refresh_archive_sources()
+
+        self.run_action("Archive %s" % os.path.basename(source), worker,
+                        on_done=done, popup_on_success=True)
+
+    def browse_archive_dir(self):
+        folder = filedialog.askdirectory(title="Choose the folder on your archive drive")
+        if not folder:
+            return
+        folder = os.path.normpath(folder)
+        self.ent_archive_dir.delete(0, tk.END)
+        self.ent_archive_dir.insert(0, folder)
+        self.save_archive_dir()
+
+    def save_archive_dir(self):
+        archive_dir = self.ent_archive_dir.get().strip()
+        ok, err = save_config({"archive_dir": archive_dir})
+        if not ok:
+            self.set_status("Could not save the archive folder. (Click for details)", "error",
+                            raw_output=err, title="Save Failed")
+            return
+        self.refresh_archive_status()
+
+    def refresh_archive_status(self):
+        archive_dir = self.ent_archive_dir.get().strip()
+        if not hasattr(self, "lbl_archive_status"):
+            return
+        if not archive_dir:
+            self.lbl_archive_status.config(
+                text="No archive drive chosen yet.", fg=self.palette["text_muted"])
+            return
+        if not os.path.isdir(archive_dir):
+            self.lbl_archive_status.config(
+                text="%s does not exist. Is the drive plugged in?" % archive_dir,
+                fg=self.palette["error"])
+            return
+        free, err = free_space(archive_dir)
+        role, detail = snapraid_role_of(archive_dir)
+        colour = {"parity": self.palette["error"], "data": self.palette["success"],
+                  "outside": self.palette["info_click"]}.get(role, self.palette["text_muted"])
+        self.lbl_archive_status.config(
+            text="%s free.  %s" % (human_size(free) if not err else "Free space unknown", detail),
+            fg=colour)
+
+    def refresh_archive_sources(self):
+        """Offer the top-level folders of the server as archive candidates."""
+        if not hasattr(self, "cmb_archive_source"):
+            return
+        root_dir = self.ent_nas_root.get().strip()
+        choices = []
+        if root_dir and os.path.isdir(root_dir):
+            for f in list_managed_folders(root_dir):
+                if _norm(f) != _norm(root_dir):
+                    choices.append(f)
+        self.cmb_archive_source["values"] = choices or [NO_FOLDER_CHOSEN]
+        if self.var_archive_source.get() not in choices:
+            self.var_archive_source.set(choices[0] if choices else NO_FOLDER_CHOSEN)
 
     def _best_local_ip(self):
         try:
@@ -3008,6 +3702,7 @@ If a drive dies or you accidentally delete a file:
         self.live_perms = {}
         self.user_folder_permissions = {}
         self.rebuild_permissions_ui()
+        self.refresh_archive_sources()
 
     # =========================================================================
     # PERMISSION STATE

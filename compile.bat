@@ -87,6 +87,22 @@ if exist "tools\check_format_strings.py" (
     )
 )
 
+REM  The dashboard's JavaScript lives inside a Python string, so an escaping
+REM  slip is a syntax error that kills every button on the page while the
+REM  Python file still imports perfectly. Skipped if node is not installed.
+if exist "tools\check_dashboard_js.py" (
+    echo  Checking the dashboard JavaScript...
+    python tools\check_dashboard_js.py
+    if errorlevel 1 (
+        echo.
+        echo  ERROR: the web dashboard's JavaScript is broken - see above.
+        echo         Nothing was built, and your previous exe is untouched.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+
 REM --- 5. Delete the previous build -----------------------------------
 REM  This happens BEFORE building on purpose. If a build fails, there must
 REM  be no old exe left sitting in dist\ that you could mistake for the new

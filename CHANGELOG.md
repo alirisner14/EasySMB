@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-17
+### Fixed
+- **Every button on the web dashboard did nothing.** One line of the dashboard's
+  JavaScript built a UNC path as `'<tr><th>\\server\' + sh.name`, where the
+  trailing `\'` escaped the closing quote instead of producing a backslash, so the
+  string literal never ended. That is a syntax
+  error, and a syntax error kills the entire `<script>` block - so `openTab()` was
+  never defined and no tab, button or form on the page responded. The Python file
+  imported perfectly and the page rendered, which is why it shipped.
+- **Icons showed as `â›`, `ðŸ"'` and similar mojibake.** The page is UTF-8 but said so
+  nowhere: no `charset` on the `Content-Type` header and no `<meta charset>` in the
+  HTML, so browsers fell back to windows-1252. Both are now declared.
+
+### Added
+- **Archive Old Files.** Move a finished folder off the main drive onto a second
+  drive, from the desktop app or from your phone. It is never a plain move: the
+  folder is copied, every file is counted and sized against the original, and only
+  then is the original deleted. If anything does not match, nothing is removed and
+  the original stays exactly where it was.
+  - Permissions travel with the files. A cross-drive move is a copy plus a delete,
+    so files would otherwise arrive with the destination's rules; the copy uses
+    `robocopy /SEC`. (`/COPYALL`, the usual advice, also copies audit settings and
+    fails with "You do not have the Manage Auditing user right".)
+  - Archived folders are locked to administrators and are never published as a
+    share, so nobody can delete them from a phone.
+  - `snapraid.conf` is read to work out what the archive drive is. Archiving to a
+    **parity** drive is refused outright; archiving to a data drive reminds you that
+    parity is stale until you sync; a drive outside the array is flagged as having
+    no protection.
+  - Refuses to archive the server root, anything outside it, or into a folder inside
+    the server; never overwrites an existing archive; checks free space first.
+  - From the dashboard the job runs in the background with live progress, so a long
+    copy does not time out on a phone.
+- `tools/check_dashboard_js.py`, run by `compile.bat`, parses the dashboard's
+  JavaScript with `node --check` so a dead page cannot ship again. Skipped when node
+  is not installed.
+
 ## [2.0.1] - 2026-09-13
 ### Fixed
 - **"Turn on phone access" crashed immediately** with `TypeError: must be real
@@ -143,6 +180,7 @@ and every action reports itself step by step.
 - SnapRAID integration with automated Task Scheduler routines.
 - Custom error interception and plain-English troubleshooting UI.
 
+[2.1.0]: https://github.com/alirisner14/EasySMB/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/alirisner14/EasySMB/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/alirisner14/EasySMB/compare/v1.1.1...v2.0.0
 [1.1.1]: https://github.com/alirisner14/EasySMB/compare/v1.1.0...v1.1.1
