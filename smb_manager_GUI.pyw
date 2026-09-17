@@ -19,7 +19,7 @@ import http.server
 from tkinter import filedialog, messagebox, ttk
 
 
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 NO_FOLDER_CHOSEN = "(scan your folders first)"
 
 # =========================================================================
@@ -680,6 +680,178 @@ def archive_is_shared(cfg=None):
     return bool(archive_dir) and bool(cfg.get("archive_share")) and os.path.isdir(archive_dir)
 
 
+def best_local_ip():
+    """This machine's address on the home network."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        sock.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+def list_server_drives():
+    """Every fixed drive on this machine, with what we know about each.
+
+    This is what lets the dashboard offer drives to publish without anybody
+    having to sit at the server.
+    """
+    data, err = powershell_json(
+        "Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Fixed' } | "
+        "Select-Object DriveLetter,FileSystemLabel,FileSystem,Size,SizeRemaining | "
+        "ConvertTo-Json -Compress")
+    if err:
+        return [], err
+
+    cfg = load_config()
+    root_dir = (cfg.get("root_dir") or "").strip()
+    managed = {_norm(p): (name, shared) for name, p, shared in extra_locations(cfg)}
+
+    out = []
+    for item in data:
+        letter = (item.get("DriveLetter") or "").strip()
+        if not letter:
+            continue
+        path = "%s:\\" % letter
+        role, detail = snapraid_role_of(path)
+        key = _norm(path)
+        name, shared = managed.get(key, (None, None))
+        out.append({
+            "path": os.path.normpath(path),
+            "letter": letter,
+            "label": item.get("FileSystemLabel") or "",
+            "size": item.get("Size") or 0,
+            "free": item.get("SizeRemaining") or 0,
+            "size_text": human_size(item.get("Size") or 0),
+            "free_text": human_size(item.get("SizeRemaining") or 0),
+            "role": role,
+            "role_detail": detail,
+            "is_root": bool(root_dir) and is_under_root(root_dir, path),
+            "managed": key in managed,
+            "share_name": name or "",
+            "shared": bool(shared),
+            "blocked": "REFUSED" if role == "parity" else "",
+        })
+    return out, ""
+
+
+def publish_share_layout(log, root_dir, mode=None):
+    """Publish the share layout. Returns False if something failed."""
+    mode = mode or load_config().get("share_mode", SHARE_MODE_FOLDERS)
+
+    step = log.begin("Read the current share list")
+    shares, err = list_smb_shares()
+    if err:
+        log.fail(step, "Could not ask Windows what is shared right now.", err)
+        return False
+    mine = [s for s in shares if not s["special"]]
+    log.ok(step, "Windows currently publishes %d share%s: %s"
+           % (len(mine), "" if len(mine) == 1 else "s",
+              ", ".join(sorted(s["name"] for s in mine)) or "none"))
+
+    planned = plan_shares(root_dir, mode, extras=extra_locations())
+    if not planned:
+        log.fail(log.begin("Work out what to publish"),
+                 "There are no folders inside %s yet, so there is nothing to share. "
+                 "Create the folder layout first." % root_dir)
+        return False
+
+    step = log.begin("Work out what the network should show")
+    if mode == SHARE_MODE_FOLDERS:
+        log.ok(step, "Tapping the server will show: %s\n(no wrapper folder to open first)"
+               % ", ".join(n for n, _p in planned))
+    else:
+        log.ok(step, "A single share '%s' - users open it, then pick a folder inside."
+               % planned[0][0])
+
+    # --- remove leftovers, one visible step each -------------------------
+    stale = shares_to_remove(shares, root_dir, planned)
+    if not stale:
+        log.note("Remove leftover shares", "None found - the share list is already clean.")
+    for sh in stale:
+        log.run("Remove leftover share '%s'  (%s)" % (sh["name"], sh["path"]),
+                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
+                 "Remove-SmbShare -Name %s -Force" % _ps_quote(sh["name"])],
+                shell=False,
+                detail="This one was making folders appear twice on phones.",
+                verify=lambda n=sh["name"]: (not share_exists(n), "Gone from the share list."))
+
+    # --- NTFS groundwork -------------------------------------------------
+    log.run("Let everyone walk through the top folder (%s)" % root_dir,
+            'icacls "%s" /grant "Authenticated Users":(RX)' % root_dir,
+            detail="Needed so users can reach the folders inside; it does not expose the contents.")
+
+    for _name, path in planned:
+        log.run("Lock down %s" % os.path.basename(path),
+                'icacls "%s" /inheritance:r /grant:r "Administrators":(OI)(CI)F' % path,
+                detail="Stops this folder inheriting access from its parent, so your "
+                       "per-user rules are the only thing that applies.")
+
+    # --- publish ----------------------------------------------------------
+    existing = {s["name"].lower(): s for s in shares}
+    all_ok = True
+    for name, path in planned:
+        current = existing.get(name.lower())
+        if current and _norm(current["path"]) != _norm(path):
+            if not is_under_root(current["path"], root_dir):
+                # Someone else's share happens to have the same name. Deleting
+                # it would break something this app knows nothing about.
+                log.fail(log.begin("Publish share '%s'" % name),
+                         "This PC already has a share called '%s' pointing at %s, which is "
+                         "outside your NAS folder.\nEasySMB will not remove a share it did not "
+                         "create. Either rename the folder %s, or delete that share yourself in "
+                         "Windows, then run this again." % (name, current["path"], path))
+                all_ok = False
+                continue
+            log.run("Remove the old '%s' share pointing at the wrong folder" % name,
+                    ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
+                     "Remove-SmbShare -Name %s -Force" % _ps_quote(name)], shell=False,
+                    detail="It pointed at %s instead of %s." % (current["path"], path))
+            current = None
+
+        if current:
+            script = ("Set-SmbShare -Name %s -FolderEnumerationMode AccessBased -Force; "
+                      "Grant-SmbShareAccess -Name %s -AccountName 'Authenticated Users' "
+                      "-AccessRight Change -Force"
+                      % (_ps_quote(name), _ps_quote(name)))
+            label = "Update share '%s'" % name
+        else:
+            script = ("New-SmbShare -Name %s -Path %s -ChangeAccess 'Authenticated Users' "
+                      "-FolderEnumerationMode AccessBased"
+                      % (_ps_quote(name), _ps_quote(path)))
+            label = "Publish share '%s'  ->  %s" % (name, path)
+
+        def verify(n=name, p=path):
+            live, e = list_smb_shares()
+            if e:
+                return False, "Could not read the share list back: %s" % e
+            for sh in live:
+                if sh["name"].lower() == n.lower():
+                    if _norm(sh["path"]) != _norm(p):
+                        return False, "The share exists but points at %s." % sh["path"]
+                    if not sh["abe"]:
+                        return False, "The share exists but access-based enumeration is off."
+                    return True, "Live at \\\\%s\\%s - folders the user cannot open stay hidden." % (
+                        socket.gethostname(), n)
+            return False, "Windows accepted the command but the share is not in the list."
+
+        if not log.run(label, ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script],
+                       shell=False, verify=verify):
+            all_ok = False
+
+    step = log.begin("Confirm what the network now shows")
+    final, err = list_smb_shares()
+    if err:
+        log.fail(step, "Could not read the final share list.", err)
+        return False
+    visible = sorted(s["name"] for s in final if not s["special"])
+    log.ok(step, "Tapping \\\\%s now shows: %s" % (best_local_ip(), ", ".join(visible) or "nothing"),
+           diagnose_network_view(root_dir, final))
+    return all_ok
+
+
 def extra_locations(cfg=None):
     """Drives and folders outside the main server folder that we look after.
 
@@ -1030,9 +1202,9 @@ def check_archive_request(source, archive_dir, root_dir):
     if src_n == root_n:
         problems.append("That is the main server folder itself. Archive the folders inside "
                         "it, not the whole thing.")
-    if root_n and not is_under_root(source, root_dir):
-        problems.append("%s is outside your main server folder, so this app will not move it."
-                        % source)
+    if root_n and not is_archivable_source(source, root_dir):
+        problems.append("%s is not one of the folders this app looks after, so it will not be "
+                        "moved. Add its drive on the Archive tab first." % source)
     if arc_n == src_n:
         problems.append("The folder and the archive are the same place.")
     if root_n and is_under_root(archive_dir, root_dir):
@@ -1312,11 +1484,72 @@ def _archive_note(message):
         ARCHIVE_JOB["note"] = message
 
 
-def archivable_folders(root_dir):
-    """Top-level folders of the server that it makes sense to archive."""
-    if not root_dir or not os.path.isdir(root_dir):
-        return []
-    return [f for f in list_managed_folders(root_dir) if _norm(f) != _norm(root_dir)]
+def start_share_job(root_dir, mode=None):
+    """Publish the share layout in the background. -> (started, why_not)
+
+    Re-uses the archive job slot so only one long task runs at a time, and so
+    the dashboard has a single place to watch for progress.
+    """
+    with ARCHIVE_JOB_LOCK:
+        if ARCHIVE_JOB["running"]:
+            return False, "Another job is already running. Wait for it to finish."
+        ARCHIVE_JOB.update({
+            "running": True, "title": "Publishing the share layout",
+            "steps": [], "report": "", "note": "", "ok": None,
+            "started": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+
+    def on_step(log, _step):
+        with ARCHIVE_JOB_LOCK:
+            ARCHIVE_JOB["steps"] = [dict(st) for st in log.steps]
+
+    def work():
+        log = ActionLog("Publishing the share layout", notify=on_step)
+        try:
+            ok = publish_share_layout(log, root_dir, mode)
+        except Exception:
+            ok = False
+            log.fail(log.begin("Unexpected error"), "The job stopped early.",
+                     traceback.format_exc())
+        log.finished = datetime.datetime.now()
+        with ARCHIVE_JOB_LOCK:
+            ARCHIVE_JOB["running"] = False
+            ARCHIVE_JOB["ok"] = bool(ok)
+            ARCHIVE_JOB["steps"] = [dict(st) for st in log.steps]
+            ARCHIVE_JOB["report"] = log.report()
+            ARCHIVE_JOB["note"] = ""
+
+    threading.Thread(target=work, daemon=True).start()
+    return True, ""
+
+
+def archivable_folders(root_dir, cfg=None):
+    """Folders that can be archived.
+
+    Anything this app manages, except the top of each managed place and
+    anything already sitting in the archive.
+    """
+    cfg = cfg or load_config()
+    archive = (cfg.get("archive_dir") or "").strip()
+    tops = {_norm(root_dir)} | {_norm(p) for _n, p, _sh in extra_locations(cfg)}
+    out = []
+    for f in all_managed_folders(root_dir, cfg=cfg):
+        if _norm(f) in tops:
+            continue
+        if archive and is_under_root(f, archive):
+            continue
+        out.append(f)
+    return out
+
+
+def is_archivable_source(path, root_dir, cfg=None):
+    """True if this folder is somewhere we are allowed to move files out of."""
+    cfg = cfg or load_config()
+    places = [root_dir] + [p for _n, p, _sh in extra_locations(cfg)]
+    archive = (cfg.get("archive_dir") or "").strip()
+    if archive and is_under_root(path, archive):
+        return False
+    return any(pl and is_under_root(path, pl) for pl in places)
 
 
 # =========================================================================
@@ -1382,6 +1615,22 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                 "deny": bool(info.get("deny")),
                 "raw": info.get("raw", ""),
                 "error": info.get("error", ""),
+            }
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+            return
+
+        # WHICH DRIVES DOES THIS SERVER HAVE, AND WHICH ARE SHARED?
+        if parsed.path == "/api/drives":
+            drives, err = list_server_drives()
+            cfg = load_config()
+            payload = {
+                "error": err,
+                "drives": drives,
+                "root_dir": cfg.get("root_dir", ""),
+                "job": archive_job_snapshot(),
             }
             self.send_response(200)
             self.send_header("Content-type", "application/json")
@@ -1674,6 +1923,90 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
 
           const STEP_MARK = {{running: "\u2026", ok: "OK", fail: "FAILED", skip: "skipped"}};
 
+          function driveAction(action, path, share) {{
+            const body = new URLSearchParams();
+            body.append('action', action);
+            body.append('path', path);
+            if (share !== undefined) body.append('share', share ? '1' : '0');
+            fetch('/drives', {{method: 'POST', body: body}})
+              .then(r => r.text())
+              .then(() => loadDrives())
+              .catch(e => alert('Could not reach the server.'));
+          }}
+
+          function loadDrives() {{
+            const list = document.getElementById('drive-list');
+            const prog = document.getElementById('drive-progress');
+            if (!list) return;
+            fetch('/api/drives')
+              .then(r => r.json())
+              .then(d => {{
+                if (d.error) {{
+                  list.innerHTML = '<p class="muted">Could not read the drives: ' + d.error + '</p>';
+                  return;
+                }}
+                let h = '<table class="matrix"><thead><tr><th>Drive</th><th>Size</th>'
+                      + '<th>Free</th><th>SnapRAID</th><th>On the network</th><th></th></tr>'
+                      + '</thead><tbody>';
+                d.drives.forEach(v => {{
+                  const label = v.letter + ':' + (v.label ? '  ' + v.label : '');
+                  let roleCell = '<span class="pill lvl-RX">not in array</span>';
+                  if (v.role === 'parity') roleCell = '<span class="pill lvl-DENY">PARITY</span>';
+                  else if (v.role === 'data') roleCell = '<span class="pill lvl-F">protected</span>';
+                  else if (v.role === 'unknown') roleCell = '<span class="pill lvl-OTHER">unknown</span>';
+
+                  let net, action;
+                  if (v.is_root) {{
+                    net = '<span class="pill lvl-F">main server folder</span>';
+                    action = '<span class="muted">managed already</span>';
+                  }} else if (v.role === 'parity') {{
+                    net = '<span class="pill lvl-DENY">never shared</span>';
+                    action = '<span class="muted">holds the protection</span>';
+                  }} else if (v.managed) {{
+                    net = v.shared
+                      ? '<span class="pill lvl-F">' + BS + BS + 'server' + BS + v.share_name + '</span>'
+                      : '<span class="pill lvl-REMOVE">added, not shared</span>';
+                    action = '<button type="button" class="link-btn" onclick="driveAction(\\'toggle\\', '
+                           + JSON.stringify(v.path) + ', ' + (v.shared ? 'false' : 'true') + ')">'
+                           + (v.shared ? 'Unshare' : 'Share') + '</button>'
+                           + ' <button type="button" class="link-btn" onclick="driveAction(\\'remove\\', '
+                           + JSON.stringify(v.path) + ')">Remove</button>';
+                  }} else {{
+                    net = '<span class="pill lvl-REMOVE">not shared</span>';
+                    action = '<button type="button" class="link-btn" onclick="driveAction(\\'add\\', '
+                           + JSON.stringify(v.path) + ')">Add this drive</button>';
+                  }}
+
+                  h += '<tr><th>' + label + '</th><td>' + v.size_text + '</td><td>' + v.free_text
+                     + '</td><td>' + roleCell + '</td><td>' + net + '</td><td>' + action + '</td></tr>';
+                }});
+                list.innerHTML = h + '</tbody></table>';
+
+                const j = d.job || {{}};
+                const btn = document.getElementById('publish-btn');
+                if (btn) {{
+                  btn.disabled = !!j.running;
+                  btn.textContent = j.running ? 'Working\\u2026' : 'Publish These Shares';
+                }}
+                if (j.steps && j.steps.length) {{
+                  let lines = [j.title + '   (started ' + j.started + ')', ''];
+                  j.steps.forEach(st => {{
+                    lines.push('[' + (STEP_MARK[st.status] || st.status) + ']  ' + st.label);
+                    if (st.detail) st.detail.split("\\n").forEach(l => lines.push('        ' + l));
+                  }});
+                  if (!j.running && j.ok !== null) {{
+                    lines.push('', j.ok ? 'Finished.' : 'Did not finish - see above.');
+                  }}
+                  prog.textContent = lines.join("\\n");
+                  prog.className = (!j.running && j.ok === false) ? 'report bad' : 'report';
+                }} else {{
+                  prog.textContent = j.running ? 'Starting\\u2026' : 'Nothing running.';
+                }}
+                if (j.running) setTimeout(loadDrives, 2000);
+              }})
+              .catch(e => {{ setTimeout(loadDrives, 5000); }});
+          }}
+
           function confirmArchive() {{
             const f = document.getElementById('archive-folder').value;
             if (!f) {{ alert("Pick a folder first."); return false; }}
@@ -1736,6 +2069,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             loadMatrix();
             loadNetworkView();
             loadArchive();
+            loadDrives();
           }});
         </script>
         </head>
@@ -1751,6 +2085,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
            <button class="tab-btn active" onclick="openTab('setup')">✦ Users & Folders</button>
            <button class="tab-btn" onclick="openTab('perms')">🔒 Security Rules</button>
            <button class="tab-btn" onclick="openTab('shares')">📡 Network Shares</button>
+           <button class="tab-btn" onclick="openTab('drives')">💾 Drives</button>
            <button class="tab-btn" onclick="openTab('archive')">📦 Archive</button>
            <button class="tab-btn" onclick="openTab('snapraid')">⛁ SnapRAID</button>
         </div>
@@ -1855,6 +2190,28 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                   Changing the share layout needs Administrator rights, so it is done from the
                   desktop app: <b>Step 5 → Update The Folder List</b>.
                 </p>
+            </div>
+        </div>
+
+        <!-- TAB: DRIVES -->
+        <div id="drives" class="tab-content">
+            <div class="card">
+                <h3>Drives On This Server</h3>
+                <p style="font-size: 13px; color: var(--text-muted); margin-top: -10px;">
+                  SnapRAID protects your drives from failing; it does not join them together.
+                  A drive is reachable over the network only when it is published as a share.
+                  Tick a drive here and press Publish to put it on the network.
+                  <button type="button" class="link-btn" onclick="loadDrives()">↺ Refresh</button>
+                </p>
+                <div id="drive-list"><p class="muted">Reading drives…</p></div>
+                <form method="POST" action="/publish_shares" style="margin-top:18px;"
+                      onsubmit="return confirm('Publish the share layout now?');">
+                    <button type="submit" id="publish-btn" class="action-btn">Publish These Shares</button>
+                </form>
+            </div>
+            <div class="card">
+                <h3>Progress</h3>
+                <pre id="drive-progress" class="report">Nothing running.</pre>
             </div>
         </div>
 
@@ -1978,6 +2335,63 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                     output = "\n".join(lines)
                 except Exception as e:
                     output = "FAILED - %s" % e
+
+        elif parsed.path == "/drives":
+            title = "Drive Log"
+            cfg = load_config()
+            action = post_qs.get("action", [""])[0]
+            path = post_qs.get("path", [""])[0].strip()
+            root_dir = (cfg.get("root_dir") or "").strip()
+            items = [e for e in (cfg.get("extra_locations") or []) if isinstance(e, dict)]
+
+            if not path:
+                output = "No drive was given."
+            elif action == "add":
+                problems = check_extra_location(path, root_dir)
+                if problems:
+                    output = "That drive was not added:\n\n  - " + "\n  - ".join(problems)
+                elif any(_norm(e.get("path", "")) == _norm(path) for e in items) or \
+                        _norm(path) == _norm(cfg.get("archive_dir", "")):
+                    output = "%s is already being managed." % path
+                else:
+                    name = os.path.basename(os.path.normpath(path).rstrip("\\/")) or "Drive"
+                    if len(name) == 2 and name[1] == ":":
+                        name = name[0] + "Drive"
+                    items.append({"path": os.path.normpath(path), "name": name, "share": True})
+                    ok, err = save_config({"extra_locations": items})
+                    role, detail = snapraid_role_of(path)
+                    output = (("Added %s as '%s'.\n\n%s\n\nPress 'Publish These Shares' to put "
+                               "it on the network." % (path, name, detail)) if ok
+                              else "Could not save: %s" % err)
+            elif action == "remove":
+                kept = [e for e in items if _norm(e.get("path", "")) != _norm(path)]
+                ok, err = save_config({"extra_locations": kept})
+                output = (("Stopped managing %s. Nothing on the drive was changed.\n\nPress "
+                           "'Publish These Shares' to take it off the network." % path) if ok
+                          else "Could not save: %s" % err)
+            elif action == "toggle":
+                want = post_qs.get("share", ["1"])[0] == "1"
+                for e in items:
+                    if _norm(e.get("path", "")) == _norm(path):
+                        e["share"] = want
+                ok, err = save_config({"extra_locations": items})
+                output = (("%s will %s be shared.\n\nPress 'Publish These Shares' to apply it."
+                           % (path, "now" if want else "no longer")) if ok
+                          else "Could not save: %s" % err)
+            else:
+                output = "Unknown action."
+
+        elif parsed.path == "/publish_shares":
+            title = "Publish Shares Log"
+            cfg = load_config()
+            root_dir = (cfg.get("root_dir") or "").strip()
+            if not root_dir or not os.path.isdir(root_dir):
+                output = "The main server folder is not set, or is not there."
+            else:
+                started, why_not = start_share_job(root_dir, cfg.get("share_mode"))
+                output = (("Publishing the share layout now.\n\nEvery step is checked and read "
+                           "back. Watch the Drives tab for progress - you can close this page, "
+                           "the job keeps running.") if started else why_not)
 
         elif parsed.path == "/archive":
             title = "Archive Log"
@@ -3326,24 +3740,13 @@ If a drive dies or you accidentally delete a file:
         if not hasattr(self, "cmb_archive_source"):
             return
         root_dir = self.ent_nas_root.get().strip()
-        choices = []
-        if root_dir and os.path.isdir(root_dir):
-            for f in list_managed_folders(root_dir):
-                if _norm(f) != _norm(root_dir):
-                    choices.append(f)
+        choices = archivable_folders(root_dir) if root_dir else []
         self.cmb_archive_source["values"] = choices or [NO_FOLDER_CHOSEN]
         if self.var_archive_source.get() not in choices:
             self.var_archive_source.set(choices[0] if choices else NO_FOLDER_CHOSEN)
 
     def _best_local_ip(self):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception:
-            return "127.0.0.1"
+        return best_local_ip()
 
     def remove_headless_service(self):
         task_name = "EasyNAS_WebDashboard"
@@ -4438,118 +4841,7 @@ If a drive dies or you accidentally delete a file:
         self.run_action(title, worker, on_done=done, popup_on_success=True)
 
     def _share_steps(self, log, root_dir, mode=None):
-        """Publish the share layout. Returns False if something failed."""
-        mode = mode or load_config().get("share_mode", SHARE_MODE_FOLDERS)
-
-        step = log.begin("Read the current share list")
-        shares, err = list_smb_shares()
-        if err:
-            log.fail(step, "Could not ask Windows what is shared right now.", err)
-            return False
-        mine = [s for s in shares if not s["special"]]
-        log.ok(step, "Windows currently publishes %d share%s: %s"
-               % (len(mine), "" if len(mine) == 1 else "s",
-                  ", ".join(sorted(s["name"] for s in mine)) or "none"))
-
-        planned = plan_shares(root_dir, mode, extras=extra_locations())
-        if not planned:
-            log.fail(log.begin("Work out what to publish"),
-                     "There are no folders inside %s yet, so there is nothing to share. "
-                     "Create the folder layout first." % root_dir)
-            return False
-
-        step = log.begin("Work out what the network should show")
-        if mode == SHARE_MODE_FOLDERS:
-            log.ok(step, "Tapping the server will show: %s\n(no wrapper folder to open first)"
-                   % ", ".join(n for n, _p in planned))
-        else:
-            log.ok(step, "A single share '%s' - users open it, then pick a folder inside."
-                   % planned[0][0])
-
-        # --- remove leftovers, one visible step each -------------------------
-        stale = shares_to_remove(shares, root_dir, planned)
-        if not stale:
-            log.note("Remove leftover shares", "None found - the share list is already clean.")
-        for sh in stale:
-            log.run("Remove leftover share '%s'  (%s)" % (sh["name"], sh["path"]),
-                    ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
-                     "Remove-SmbShare -Name %s -Force" % _ps_quote(sh["name"])],
-                    shell=False,
-                    detail="This one was making folders appear twice on phones.",
-                    verify=lambda n=sh["name"]: (not share_exists(n), "Gone from the share list."))
-
-        # --- NTFS groundwork -------------------------------------------------
-        log.run("Let everyone walk through the top folder (%s)" % root_dir,
-                'icacls "%s" /grant "Authenticated Users":(RX)' % root_dir,
-                detail="Needed so users can reach the folders inside; it does not expose the contents.")
-
-        for _name, path in planned:
-            log.run("Lock down %s" % os.path.basename(path),
-                    'icacls "%s" /inheritance:r /grant:r "Administrators":(OI)(CI)F' % path,
-                    detail="Stops this folder inheriting access from its parent, so your "
-                           "per-user rules are the only thing that applies.")
-
-        # --- publish ----------------------------------------------------------
-        existing = {s["name"].lower(): s for s in shares}
-        all_ok = True
-        for name, path in planned:
-            current = existing.get(name.lower())
-            if current and _norm(current["path"]) != _norm(path):
-                if not is_under_root(current["path"], root_dir):
-                    # Someone else's share happens to have the same name. Deleting
-                    # it would break something this app knows nothing about.
-                    log.fail(log.begin("Publish share '%s'" % name),
-                             "This PC already has a share called '%s' pointing at %s, which is "
-                             "outside your NAS folder.\nEasySMB will not remove a share it did not "
-                             "create. Either rename the folder %s, or delete that share yourself in "
-                             "Windows, then run this again." % (name, current["path"], path))
-                    all_ok = False
-                    continue
-                log.run("Remove the old '%s' share pointing at the wrong folder" % name,
-                        ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
-                         "Remove-SmbShare -Name %s -Force" % _ps_quote(name)], shell=False,
-                        detail="It pointed at %s instead of %s." % (current["path"], path))
-                current = None
-
-            if current:
-                script = ("Set-SmbShare -Name %s -FolderEnumerationMode AccessBased -Force; "
-                          "Grant-SmbShareAccess -Name %s -AccountName 'Authenticated Users' "
-                          "-AccessRight Change -Force"
-                          % (_ps_quote(name), _ps_quote(name)))
-                label = "Update share '%s'" % name
-            else:
-                script = ("New-SmbShare -Name %s -Path %s -ChangeAccess 'Authenticated Users' "
-                          "-FolderEnumerationMode AccessBased"
-                          % (_ps_quote(name), _ps_quote(path)))
-                label = "Publish share '%s'  ->  %s" % (name, path)
-
-            def verify(n=name, p=path):
-                live, e = list_smb_shares()
-                if e:
-                    return False, "Could not read the share list back: %s" % e
-                for sh in live:
-                    if sh["name"].lower() == n.lower():
-                        if _norm(sh["path"]) != _norm(p):
-                            return False, "The share exists but points at %s." % sh["path"]
-                        if not sh["abe"]:
-                            return False, "The share exists but access-based enumeration is off."
-                        return True, "Live at \\\\%s\\%s - folders the user cannot open stay hidden." % (
-                            socket.gethostname(), n)
-                return False, "Windows accepted the command but the share is not in the list."
-
-            if not log.run(label, ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script],
-                           shell=False, verify=verify):
-                all_ok = False
-
-        step = log.begin("Confirm what the network now shows")
-        final, err = list_smb_shares()
-        if err:
-            log.fail(step, "Could not read the final share list.", err)
-            return False
-        visible = sorted(s["name"] for s in final if not s["special"])
-        log.ok(step, "Tapping \\\\%s now shows: %s" % (self._best_local_ip(), ", ".join(visible) or "nothing"),
-               diagnose_network_view(root_dir, final))
-        return all_ok
+        return publish_share_layout(log, root_dir, mode)
 
     def save_share_mode(self):
         mode = self.var_share_mode.get()

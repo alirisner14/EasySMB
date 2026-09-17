@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-09-17
+### Added
+- **Drives tab on the web dashboard.** Every fixed drive on the server is listed with
+  its size, free space and SnapRAID role, and each one can be added, shared, unshared
+  or removed from a phone. There is a "Publish These Shares" button too, so a drive
+  can go from invisible to reachable without anyone sitting at the server - which was
+  the point of the dashboard in the first place.
+  - The parity drive is shown but can never be added or shared.
+  - The drive holding the main server folder is marked as already managed.
+  - Publishing runs as a background job with live progress, so a slow apply does not
+    time out on a phone.
+
+### Fixed
+- **A folder on an added drive could not actually be archived.** It was offered in the
+  list but the safety check still demanded the source be inside the main server
+  folder, so the move was refused. Archiving now works from any managed drive - useful
+  for clearing a scratch drive into the archive - while still refusing to archive out
+  of the archive itself.
+- Folders on added drives were missing from the dashboard's list of archivable
+  folders.
+
 ## [2.2.0] - 2026-09-17
 ### Added
 - **Any drive can be opened over the network, not just the main one.** SnapRAID
@@ -217,6 +238,7 @@ and every action reports itself step by step.
 - SnapRAID integration with automated Task Scheduler routines.
 - Custom error interception and plain-English troubleshooting UI.
 
+[2.3.0]: https://github.com/alirisner14/EasySMB/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/alirisner14/EasySMB/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/alirisner14/EasySMB/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/alirisner14/EasySMB/compare/v2.0.0...v2.0.1

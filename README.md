@@ -167,6 +167,17 @@ and only administrators signed in to the server can reach it.
 Worth being clear about: anything reachable for dragging files **in** is also
 reachable for deleting them **out**.
 
+### Adding your other drives
+
+A second or third drive is a separate place — it is reachable over the network only
+once it is published. Add one on the Archive tab, or from the **Drives** tab of the
+web dashboard, which lists every drive on the server with its size, free space and
+SnapRAID role and lets you share or unshare each one from your phone. The parity
+drive is shown but can never be shared.
+
+Once a drive is added, its folders appear in the permissions panel like any other,
+and you can archive folders off it too.
+
 ### SnapRAID does not merge your drives
 
 SnapRAID computes parity so a failed drive can be rebuilt. It does not pool
