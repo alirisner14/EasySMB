@@ -19,7 +19,7 @@ import http.server
 from tkinter import filedialog, messagebox, ttk
 
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 NO_FOLDER_CHOSEN = "(scan your folders first)"
 
 # =========================================================================
@@ -131,6 +131,15 @@ CONFIG_DEFAULTS = {
     # out of the share list on purpose - it is an administrator holding
     # area, not something the family browses.
     "archive_dir": "",
+    # Publish the archive drive as its own share, so it can be opened and
+    # dropped into from any device the same way the main folders are.
+    "archive_share": True,
+    "archive_share_name": "Archive",
+    # Any other drive on this machine worth sharing and setting permissions
+    # on - a scratch drive, a media drive. SnapRAID does not merge drives, so
+    # each one is its own place and has to be published to be reachable.
+    # [{"path": "F:\\Scratch", "name": "Scratch", "share": true}]
+    "extra_locations": [],
 }
 
 
@@ -659,15 +668,115 @@ def list_managed_folders(root_dir, depth=2):
     return sorted({f.lower(): f for f in found}.values(), key=lambda s: s.lower())
 
 
-def plan_shares(root_dir, mode):
+def archive_share_name(cfg=None):
+    cfg = cfg or load_config()
+    name = (cfg.get("archive_share_name") or "Archive").strip()
+    return name or "Archive"
+
+
+def archive_is_shared(cfg=None):
+    cfg = cfg or load_config()
+    archive_dir = (cfg.get("archive_dir") or "").strip()
+    return bool(archive_dir) and bool(cfg.get("archive_share")) and os.path.isdir(archive_dir)
+
+
+def extra_locations(cfg=None):
+    """Drives and folders outside the main server folder that we look after.
+
+    SnapRAID does not pool drives, so a second or third drive is simply a
+    separate place. It is reachable over the network exactly when it is
+    published as a share - which is what this list is for.
+
+    Returns [(share_name, path, shared)].
+    """
+    cfg = cfg or load_config()
+    out, seen = [], set()
+
+    archive = (cfg.get("archive_dir") or "").strip()
+    if archive:
+        out.append((archive_share_name(cfg), os.path.normpath(archive),
+                    bool(cfg.get("archive_share"))))
+        seen.add(_norm(archive))
+
+    for item in (cfg.get("extra_locations") or []):
+        if not isinstance(item, dict):
+            continue
+        path = (item.get("path") or "").strip()
+        if not path or _norm(path) in seen:
+            continue
+        seen.add(_norm(path))
+        name = (item.get("name") or "").strip() or \
+            (os.path.basename(os.path.normpath(path).rstrip("\\/")) or "Drive")
+        out.append((name, os.path.normpath(path), bool(item.get("share", True))))
+    return out
+
+
+def check_extra_location(path, root_dir):
+    """Reasons a drive should not be added as a managed location."""
+    problems = []
+    if not path:
+        return ["No folder was given."]
+    if not os.path.isdir(path):
+        problems.append("%s does not exist. Is the drive plugged in?" % path)
+        return problems
+    if root_dir and is_under_root(path, root_dir):
+        problems.append("%s is already inside your main server folder, so it is managed "
+                        "already." % path)
+    role, detail = snapraid_role_of(path)
+    if role == "parity":
+        problems.append("REFUSED: %s Parity is not a place for files, and sharing it invites "
+                        "somebody to delete the thing protecting every other drive." % detail)
+    return problems
+
+
+def all_managed_folders(root_dir, archive_dir=None, depth=2, cfg=None):
+    """Every folder whose permissions this app looks after.
+
+    SnapRAID does not merge drives, so a second or third drive is a separate
+    place entirely. Each one has to be listed rather than found by walking the
+    main folder.
+    """
+    found = list_managed_folders(root_dir) if root_dir and os.path.isdir(root_dir) else []
+    for _name, path, _shared in extra_locations(cfg):
+        if os.path.isdir(path):
+            found += list_managed_folders(path, depth=depth)
+    if archive_dir and os.path.isdir(archive_dir):
+        found += list_managed_folders(archive_dir, depth=depth)
+    seen, out = set(), []
+    for f in found:
+        key = _norm(f)
+        if key not in seen:
+            seen.add(key)
+            out.append(f)
+    return out
+
+
+def plan_shares(root_dir, mode, extras=None):
     """What the share list should look like. -> [(share_name, path)]"""
     root_dir = os.path.normpath(root_dir)
     if mode == SHARE_MODE_MASTER:
         name = os.path.basename(root_dir.rstrip("\\/"))
         if not name or (len(name) == 2 and name[1] == ":"):
             name = "RootNAS"
-        return [(name, root_dir)]
-    return [(os.path.basename(f), f) for f in top_level_folders(root_dir)]
+        planned = [(name, root_dir)]
+    else:
+        planned = [(os.path.basename(f), f) for f in top_level_folders(root_dir)]
+
+    # Other drives are never found by walking the main folder. Publishing them
+    # is exactly what makes them reachable over the network.
+    for name, path, shared in (extras or []):
+        if not shared or not os.path.isdir(path):
+            continue
+        taken = {n.lower() for n, _p in planned}
+        candidate = name or os.path.basename(os.path.normpath(path).rstrip("\\/")) or "Drive"
+        if candidate.lower() in taken:
+            candidate = candidate + "Drive"
+        n = 2
+        while candidate.lower() in taken:
+            candidate = "%s%d" % (name, n)
+            n += 1
+        planned.append((candidate, os.path.normpath(path)))
+    return planned
 
 
 def is_under_root(path, root_dir):
@@ -1028,11 +1137,21 @@ def perform_archive(log, source, archive_dir, root_dir, status_cb=None):
         return False
     log.ok(step, detail)
 
-    step = log.begin("Lock the archived copy to administrators")
-    ok, out = run_console('icacls "%s" /inheritance:r /grant:r "Administrators":(OI)(CI)F'
-                          % dest)
+    if archive_is_shared():
+        # The archive drive is published, so this folder should behave like any
+        # other shared folder: whatever access the archive drive has, it gets.
+        step = log.begin("Apply the archive drive's access rules")
+        ok, out = run_console('icacls "%s" /reset /T /C /Q' % dest)
+        detail = ("It follows the archive drive's permissions, so you can open it over the "
+                  "network like any other folder.")
+    else:
+        step = log.begin("Lock the archived copy to administrators")
+        ok, out = run_console('icacls "%s" /inheritance:r /grant:r "Administrators":(OI)(CI)F'
+                              % dest)
+        detail = "Only administrators can open it. It is not shared on the network."
+
     if ok:
-        log.ok(step, "Only administrators can open it. It is not shared on the network.")
+        log.ok(step, detail)
     else:
         log.fail(step, "The files are safely copied, but the permissions could not be set. "
                        "Set them yourself before deleting the original.", out)
@@ -1240,7 +1359,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         root_dir = load_config().get("root_dir", "")
         if not root_dir or not os.path.exists(root_dir):
             return []
-        return list_managed_folders(root_dir)
+        return all_managed_folders(root_dir)
 
     def do_GET(self):
         if not self.check_auth():
@@ -2597,6 +2716,46 @@ If a drive dies or you accidentally delete a file:
                                            anchor="w", justify="left", wraplength=780)
         self.lbl_archive_status.pack(fill="x", pady=(8, 0))
 
+        self.var_archive_share = tk.BooleanVar(value=bool(load_config().get("archive_share", True)))
+        ttk.Checkbutton(drive_card,
+                        text="Open it over the network too, like your other folders",
+                        variable=self.var_archive_share, command=self.save_archive_share,
+                        style="Glass.TCheckbutton").pack(anchor="w", pady=(10, 0))
+        tk.Label(drive_card,
+                 text=("On  →  it appears as its own folder when you tap the server, so you can browse it\n"
+                       "        and drag files into it from any device. Who can open it is set on the\n"
+                       "        'People & Folders' tab, the same as every other folder.\n"
+                       "Off →  only administrators signed in to this PC can reach it. Nothing on the\n"
+                       "        network can see it, so nobody can delete an archived folder by accident."),
+                 bg=self.palette["glass_card"], fg=self.palette["text_muted"],
+                 font=("Segoe UI", 8), justify="left").pack(anchor="w", pady=(2, 0))
+        tk.Label(drive_card,
+                 text=("Anything reachable for dragging files IN is also reachable for deleting them OUT.\n"
+                       "SnapRAID protects you from a dead drive, not from a deleted file."),
+                 bg=self.palette["glass_card"], fg=self.palette["info_click"],
+                 font=("Segoe UI", 8, "bold"), justify="left").pack(anchor="w", pady=(6, 0))
+
+        other_rim, other_card = self.create_glass_card(panel, title="Other Drives On This Server")
+        other_rim.pack(fill="x", pady=6)
+        tk.Label(other_card,
+                 text=("A scratch drive, a media drive - any other drive you want reachable over the\n"
+                       "network. SnapRAID protects your drives from failing; it does not join them\n"
+                       "together, so each drive is its own place and has to be published to be seen.\n"
+                       "Once added, a drive shows up in the permissions list like any other folder."),
+                 bg=self.palette["glass_card"], fg=self.palette["text_frost"],
+                 font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 10))
+
+        self.extra_drives_frame = tk.Frame(other_card, bg=self.palette["glass_card"])
+        self.extra_drives_frame.pack(fill="x", pady=(0, 8))
+
+        addrow = tk.Frame(other_card, bg=self.palette["glass_card"])
+        addrow.pack(fill="x")
+        FrostedGlassButton(addrow, text="+ Add A Drive", command=self.add_extra_drive,
+                           width=160, height=34, radius=16, color_scheme="neutral").pack(side="left")
+        tk.Label(addrow, text="   (the parity drive is refused - it holds the protection, not files)",
+                 bg=self.palette["glass_card"], fg=self.palette["text_muted"],
+                 font=("Segoe UI", 8)).pack(side="left")
+
         move_rim, move_card = self.create_glass_card(panel, title="Move A Folder To The Archive")
         move_rim.pack(fill="x", pady=6)
 
@@ -2660,6 +2819,7 @@ If a drive dies or you accidentally delete a file:
         txt.pack(side="left", fill="both", expand=True)
 
         self.refresh_archive_status()
+        self.rebuild_extra_drives_ui()
 
     def build_web_tab(self):
         panel = tk.Frame(self.tab_web, bg=self.palette["bg_tint"])
@@ -3004,6 +3164,140 @@ If a drive dies or you accidentally delete a file:
             self.set_status("Could not save the archive folder. (Click for details)", "error",
                             raw_output=err, title="Save Failed")
             return
+        self.refresh_archive_status()
+
+    def add_extra_drive(self):
+        folder = filedialog.askdirectory(title="Choose a drive or folder to share")
+        if not folder:
+            return
+        folder = os.path.normpath(folder)
+        root_dir = self.ent_nas_root.get().strip()
+
+        problems = check_extra_location(folder, root_dir)
+        if problems:
+            messagebox.showerror("Cannot add that drive", "\n\n".join(problems))
+            return
+
+        cfg = load_config()
+        existing = list(cfg.get("extra_locations") or [])
+        if any(_norm((e or {}).get("path", "")) == _norm(folder) for e in existing):
+            messagebox.showinfo("Already added", "%s is already on the list." % folder)
+            return
+        if _norm(folder) == _norm(cfg.get("archive_dir", "")):
+            messagebox.showinfo("Already added",
+                                "That is your archive drive - it is managed above.")
+            return
+
+        name = os.path.basename(folder.rstrip("\\/")) or "Drive"
+        if len(name) == 2 and name[1] == ":":          # a bare drive letter
+            name = name[0] + "Drive"
+        existing.append({"path": folder, "name": name, "share": True})
+        ok, err = save_config({"extra_locations": existing})
+        if not ok:
+            self.set_status("Could not save the drive list. (Click for details)", "error",
+                            raw_output=err, title="Save Failed")
+            return
+
+        role, detail = snapraid_role_of(folder)
+        self.set_status("Added %s. Press 'Update The Folder List' on the People & Folders tab "
+                        "to publish it." % folder, "success", raw_output=detail,
+                        title="Drive Added")
+        self.rebuild_extra_drives_ui()
+        self.scan_or_populate_folders()
+
+    def remove_extra_drive(self, path):
+        if not messagebox.askyesno(
+                "Stop managing this drive?",
+                "%s will no longer be shared or listed in the permissions panel.\n\n"
+                "Nothing on the drive is deleted or changed." % path):
+            return
+        cfg = load_config()
+        kept = [e for e in (cfg.get("extra_locations") or [])
+                if _norm((e or {}).get("path", "")) != _norm(path)]
+        ok, err = save_config({"extra_locations": kept})
+        if not ok:
+            self.set_status("Could not save the drive list. (Click for details)", "error",
+                            raw_output=err, title="Save Failed")
+            return
+        self.set_status("Removed %s. Press 'Update The Folder List' to take it off the "
+                        "network." % path, "success")
+        self.rebuild_extra_drives_ui()
+        self.scan_or_populate_folders()
+
+    def toggle_extra_drive_share(self, path, var):
+        cfg = load_config()
+        items = list(cfg.get("extra_locations") or [])
+        for e in items:
+            if _norm((e or {}).get("path", "")) == _norm(path):
+                e["share"] = bool(var.get())
+        ok, err = save_config({"extra_locations": items})
+        if not ok:
+            self.set_status("Could not save. (Click for details)", "error",
+                            raw_output=err, title="Save Failed")
+            return
+        self.set_status("Saved. Press 'Update The Folder List' on the People & Folders tab "
+                        "to apply it.", "success")
+
+    def rebuild_extra_drives_ui(self):
+        box = getattr(self, "extra_drives_frame", None)
+        if box is None:
+            return
+        for w in box.winfo_children():
+            w.destroy()
+
+        cfg = load_config()
+        items = [e for e in (cfg.get("extra_locations") or []) if isinstance(e, dict)]
+        if not items:
+            tk.Label(box, text="No other drives added yet.", bg=self.palette["glass_card"],
+                     fg=self.palette["text_muted"], font=("Segoe UI", 9)).pack(anchor="w")
+            return
+
+        self._extra_drive_vars = {}
+        for e in items:
+            path = (e.get("path") or "").strip()
+            if not path:
+                continue
+            row = tk.Frame(box, bg=self.palette["glass_card"])
+            row.pack(fill="x", pady=2)
+
+            var = tk.BooleanVar(value=bool(e.get("share", True)))
+            self._extra_drive_vars[path] = var
+            ttk.Checkbutton(row, text="", variable=var, style="Glass.TCheckbutton",
+                            command=lambda p=path, v=var: self.toggle_extra_drive_share(p, v)
+                            ).pack(side="left")
+
+            exists = os.path.isdir(path)
+            free, _err = free_space(path) if exists else (0, "x")
+            role, _detail = snapraid_role_of(path) if exists else ("unknown", "")
+            role_text = {"data": "in the SnapRAID array", "parity": "PARITY DRIVE",
+                         "outside": "not in the array"}.get(role, "")
+            label = "\\\\%s\\%s   →   %s" % (socket.gethostname(),
+                                                  e.get("name") or os.path.basename(path), path)
+            tk.Label(row, text=label, bg=self.palette["glass_card"],
+                     fg=self.palette["text_frost"] if exists else self.palette["error"],
+                     font=("Segoe UI", 9)).pack(side="left", padx=(4, 10))
+            tk.Label(row,
+                     text=("%s free, %s" % (human_size(free), role_text)) if exists
+                     else "drive not found",
+                     bg=self.palette["glass_card"], fg=self.palette["text_muted"],
+                     font=("Segoe UI", 8)).pack(side="left")
+            tk.Button(row, text="Remove", bg=self.palette["glass_card"],
+                      fg=self.palette["text_muted"], font=("Segoe UI", 8, "bold"),
+                      relief="flat", padx=8,
+                      command=lambda p=path: self.remove_extra_drive(p)).pack(side="right")
+
+    def save_archive_share(self):
+        ok, err = save_config({"archive_share": bool(self.var_archive_share.get())})
+        if not ok:
+            self.set_status("Could not save the setting. (Click for details)", "error",
+                            raw_output=err, title="Save Failed")
+            return
+        if self.var_archive_share.get():
+            self.set_status("Saved. Press 'Update The Folder List' on the People & Folders tab "
+                            "to publish the archive drive.", "success")
+        else:
+            self.set_status("Saved. Press 'Update The Folder List' on the People & Folders tab "
+                            "to remove the archive from the network.", "success")
         self.refresh_archive_status()
 
     def refresh_archive_status(self):
@@ -3673,7 +3967,7 @@ If a drive dies or you accidentally delete a file:
                 log.do("Shared folder everyone can use", make(os.path.join(root_dir, "Shared")))
 
             step = log.begin("Re-scan the folder tree")
-            folders = list_managed_folders(root_dir)
+            folders = all_managed_folders(root_dir)
             self.root.after(0, lambda f=folders: self._adopt_scanned_folders(f))
             log.ok(step, "Found %d folder%s to manage." % (len(folders), "" if len(folders) == 1 else "s"))
 
@@ -3689,7 +3983,7 @@ If a drive dies or you accidentally delete a file:
             threading.Thread(target=self._background_takeown, args=(root_dir,), daemon=True).start()
 
         try:
-            folders = list_managed_folders(root_dir)
+            folders = all_managed_folders(root_dir)
         except Exception as e:
             self.set_status("Could not read the folder tree. (Click for details)", "error",
                             raw_output=str(e), title="Directory Scan Error")
@@ -4157,7 +4451,7 @@ If a drive dies or you accidentally delete a file:
                % (len(mine), "" if len(mine) == 1 else "s",
                   ", ".join(sorted(s["name"] for s in mine)) or "none"))
 
-        planned = plan_shares(root_dir, mode)
+        planned = plan_shares(root_dir, mode, extras=extra_locations())
         if not planned:
             log.fail(log.begin("Work out what to publish"),
                      "There are no folders inside %s yet, so there is nothing to share. "

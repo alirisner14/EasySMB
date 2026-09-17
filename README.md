@@ -151,6 +151,39 @@ last week's program thinking it is the one you just built.
 you've hidden, the share layout, and the dashboard password. Copy it alongside the
 `.exe` if you move an existing setup.
 
+## The archive drive
+
+The "Archive Old Files" tab moves a finished folder off your main drive onto a
+second drive. It is never a plain move: the folder is copied, every file is
+counted and sized against the original, and only then is the original deleted.
+If anything does not match, nothing is removed.
+
+Tick **"Open it over the network too"** and the archive drive is published as its
+own folder, so tapping the server shows it beside Users, Family_Shared and
+Resources. You can browse it and drag files into it from any device, and who can
+open it is set in the permissions panel like any other folder. Leave it unticked
+and only administrators signed in to the server can reach it.
+
+Worth being clear about: anything reachable for dragging files **in** is also
+reachable for deleting them **out**.
+
+### SnapRAID does not merge your drives
+
+SnapRAID computes parity so a failed drive can be rebuilt. It does not pool
+drives — each one keeps its own filesystem, and files stay on whichever drive you
+put them on. That is why the archive drive is a separate place rather than part
+of one big folder.
+
+SnapRAID has a `pool` option, but it builds a **read-only** view out of symbolic
+links, and on Windows every client has to be configured with
+`fsutil behavior set SymlinkEvaluation` — which phones and tablets cannot do.
+
+If you genuinely want one merged folder spanning every drive, that needs a
+separate pooling layer; SnapRAID's own documentation points at
+[StableBit DrivePool](https://stablebit.com/DrivePool) for Windows, which runs
+alongside SnapRAID. Publishing the archive as its own share is the option that
+needs no extra software.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).

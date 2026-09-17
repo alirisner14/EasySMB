@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-09-17
+### Added
+- **Any drive can be opened over the network, not just the main one.** SnapRAID
+  protects drives from failing; it does not join them together, so a second or third
+  drive is simply a separate place that has to be published to be reachable. The
+  Archive tab now has an "Other Drives On This Server" list - add a scratch drive, a
+  media drive, whatever you have, and it is published as its own folder and appears
+  in the permissions panel like everything else.
+  - Adding the SnapRAID **parity** drive is refused: parity holds the protection, not
+    files, and sharing it invites somebody to delete the thing guarding every other
+    drive.
+  - Two drives wanting the same share name are disambiguated rather than one quietly
+    replacing the other.
+  - Unticking a drive takes it off the network without touching anything on it.
+- **The archive drive can be opened over the network like any other folder.**
+  Turn it on from the Archive tab and it is published as its own share, so tapping
+  the server shows it next to Users, Family_Shared and Resources. You can browse it
+  and drag files into it from any device.
+  - Its folders now appear in the permissions panel, so who can open the archive is
+    set the same way as every other folder.
+  - Archived folders take the archive drive's access rules rather than being locked
+    to administrators. With the setting off, the old admin-only behaviour is kept.
+  - A name clash is handled: if a real folder is already called Archive, the drive is
+    published as ArchiveDrive instead of quietly replacing it.
+  - The tab spells out the trade-off - anything reachable for dragging files in is
+    also reachable for deleting them out, and SnapRAID protects against a dead drive,
+    not a deleted file.
+
+### Note on SnapRAID
+SnapRAID does not pool drives. It computes parity so a failed drive can be rebuilt;
+each drive keeps its own filesystem and files stay where you put them. Its built-in
+`pool` option makes a read-only view out of symbolic links, and on Windows every
+client has to be configured with `fsutil behavior set SymlinkEvaluation`, which
+phones and tablets cannot do. For one merged folder across drives, SnapRAID's own
+documentation points at a separate pooling tool such as StableBit DrivePool.
+Publishing the archive as its own share is the option that needs no extra software.
+
 ## [2.1.0] - 2026-09-17
 ### Fixed
 - **Every button on the web dashboard did nothing.** One line of the dashboard's
@@ -180,6 +217,7 @@ and every action reports itself step by step.
 - SnapRAID integration with automated Task Scheduler routines.
 - Custom error interception and plain-English troubleshooting UI.
 
+[2.2.0]: https://github.com/alirisner14/EasySMB/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/alirisner14/EasySMB/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/alirisner14/EasySMB/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/alirisner14/EasySMB/compare/v1.1.1...v2.0.0
