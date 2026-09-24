@@ -19,7 +19,7 @@ import http.server
 from tkinter import filedialog, messagebox, ttk
 
 
-APP_VERSION = "2.3.3"
+APP_VERSION = "2.4.0"
 NO_FOLDER_CHOSEN = "(scan your folders first)"
 
 # =========================================================================
@@ -370,6 +370,69 @@ def apply_user_permission(path, user, level):
                 "(the 'Save All Changes' button does this) before this setting can take effect."
                 % PERM_LABELS.get(after.get("level"), after.get("level")))
     return ok, after, (cmd + "\n" + log.strip()).strip()
+
+
+
+# =========================================================================
+# UPDATING THIS PROGRAM FROM THE DASHBOARD
+# Windows will not let a running .exe replace itself, so the update runs as a
+# separate process (tools/remote_update.py) that outlives this one. It puts
+# the old version back if the new one does not answer, so a bad update cannot
+# leave the server unreachable.
+# =========================================================================
+def updater_path():
+    base = os.path.dirname(os.path.abspath(sys.argv[0]))
+    return os.path.join(base, "tools", "remote_update.py")
+
+
+def update_available():
+    """-> (behind_count, list of one-line descriptions, error)."""
+    repo = os.path.dirname(os.path.abspath(sys.argv[0]))
+    if not os.path.isdir(os.path.join(repo, ".git")):
+        return 0, [], ("This copy was not installed with git, so it cannot update "
+                       "itself. Updates have to be done on the server.")
+    try:
+        subprocess.run(["git", "fetch", "--quiet", "origin"], cwd=repo,
+                       capture_output=True, text=True, timeout=120,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+        res = subprocess.run(["git", "log", "--oneline", "HEAD..origin/main"],
+                             cwd=repo, capture_output=True, text=True, timeout=60,
+                             creationflags=subprocess.CREATE_NO_WINDOW)
+    except Exception as exc:
+        return 0, [], str(exc)
+    lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
+    return len(lines), lines, ""
+
+
+def start_update_job():
+    """Launch the updater so it survives this process being stopped."""
+    script = updater_path()
+    if not os.path.exists(script):
+        return False, "tools/remote_update.py is missing from this install."
+    exe = sys.executable
+    if exe.lower().endswith("smb_manager_gui.exe"):
+        exe = "python"
+    flags = 0
+    if hasattr(subprocess, "DETACHED_PROCESS"):
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        subprocess.Popen([exe, script, "--apply"],
+                         cwd=os.path.dirname(os.path.dirname(script)),
+                         creationflags=flags, close_fds=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    except Exception as exc:
+        return False, str(exc)
+    return True, ""
+
+
+def update_log_tail(lines=40):
+    path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])),
+                        "update_log.txt")
+    try:
+        return "".join(io.open(path, encoding="utf-8").readlines()[-lines:])
+    except Exception:
+        return "(no update has been run yet)"
 
 
 # =========================================================================
@@ -1666,6 +1729,23 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         return all_managed_folders(root_dir)
 
     def do_GET(self):
+        # Answered before the password check, and only for requests coming from
+        # this machine, so the updater can tell whether the new build actually
+        # came up. It reports nothing but the version and the process id.
+        if self.path.split("?")[0] == "/healthz":
+            if self.client_address[0] not in ("127.0.0.1", "::1"):
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = json.dumps({"ok": True, "version": APP_VERSION,
+                               "pid": os.getpid()}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if not self.check_auth():
             self.require_auth()
             return
@@ -1691,6 +1771,20 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
+            return
+
+        # IS THERE A NEWER VERSION, AND WHAT HAPPENED LAST TIME WE UPDATED?
+        if parsed.path == "/api/update_check":
+            count, lines, err = update_available()
+            payload = {"version": APP_VERSION, "behind": count,
+                       "changes": lines, "error": err,
+                       "log": update_log_tail()}
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         # WHICH DRIVES DOES THIS SERVER HAVE, AND WHICH ARE SHARED?
@@ -2205,11 +2299,41 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
               .catch(e => {{ setTimeout(loadArchive, 5000); }});
           }}
 
+          function loadUpdate() {{
+            const box = document.getElementById('updateStatus');
+            const btn = document.getElementById('updateBtn');
+            const log = document.getElementById('updateLog');
+            if (!box) return;
+            box.textContent = 'Checking for a newer version...';
+            fetch('/api/update_check').then(r => r.json()).then(d => {{
+              if (log) log.textContent = d.log || '(no update has been run yet)';
+              if (d.error) {{
+                box.textContent = d.error;
+                if (btn) btn.disabled = true;
+                return;
+              }}
+              if (!d.behind) {{
+                box.textContent = 'You are running v' + d.version +
+                                  ', which is the newest version.';
+                if (btn) btn.disabled = true;
+                return;
+              }}
+              let txt = 'You are running v' + d.version + '. ' + d.behind +
+                        ' update' + (d.behind === 1 ? '' : 's') + ' available:';
+              (d.changes || []).forEach(c => {{ txt += String.fromCharCode(10) + '   ' + c; }});
+              box.textContent = txt;
+              if (btn) btn.disabled = false;
+            }}).catch(e => {{
+              box.textContent = 'Could not check for updates: ' + e;
+            }});
+          }}
+
           document.addEventListener("DOMContentLoaded", () => {{
             loadMatrix();
             loadNetworkView();
             loadArchive();
             loadDrives();
+            loadUpdate();
           }});
         </script>
         </head>
@@ -2228,6 +2352,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
            <button class="tab-btn" onclick="openTab('drives')">💾 Drives</button>
            <button class="tab-btn" onclick="openTab('archive')">📦 Archive</button>
            <button class="tab-btn" onclick="openTab('snapraid')">⛁ SnapRAID</button>
+           <button class="tab-btn" onclick="openTab('update')">⭯ Update</button>
         </div>
         
         <!-- TAB 1: USERS & FOLDERS -->
@@ -2342,6 +2467,25 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         </div>
 
         <!-- TAB 3: SNAPRAID -->
+        <div id="update" class="tab-content">
+            <div class="card">
+                <h3>Update EasySMB</h3>
+                <p style="font-size:13px;color:var(--text-muted);margin-top:-10px;margin-bottom:15px;">
+                   Installs the newest version on the server from here, so you do not have to
+                   go to the machine. If the new version does not start, the one you have now
+                   is put back automatically.</p>
+                <div id="updateStatus" class="well" style="margin-bottom:12px;">Checking...</div>
+                <form method="POST" action="/update" onsubmit="return confirm(
+                      'Update the server now?\n\nThe dashboard will be unreachable for a minute '
+                      + 'or two while it restarts. If the new version fails to start, the current '
+                      + 'one is restored automatically.');">
+                    <button type="submit" class="action-btn success-btn" id="updateBtn">Install The Update</button>
+                </form>
+                <h4 style="margin-top:22px;">What happened last time</h4>
+                <pre id="updateLog" class="well" style="max-height:260px;overflow:auto;white-space:pre-wrap;">-</pre>
+            </div>
+        </div>
+
         <div id="snapraid" class="tab-content">
             <div class="card">
                 <h3>SnapRAID Operations</h3>
@@ -2396,6 +2540,26 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                 except Exception as e:
                     output = str(e)
                     
+        elif parsed.path == "/update":
+            title = "Update"
+            count, lines, err = update_available()
+            if err:
+                output = "Cannot update:\n%s" % err
+            elif not count:
+                output = "Already running the newest version (v%s)." % APP_VERSION
+            else:
+                ok, why = start_update_job()
+                if ok:
+                    output = ("Updating to the newest version.\n\n"
+                              + "\n".join("  " + ln for ln in lines) +
+                              "\n\nThis page will stop responding for a minute or two "
+                              "while the server restarts. Reload it then.\n\n"
+                              "If the new version does not come back up, the previous "
+                              "one is started again automatically, so the dashboard "
+                              "will still be there.")
+                else:
+                    output = "Could not start the updater:\n%s" % why
+
         elif parsed.path == "/perms":
             title = "Permissions Log"
             user = post_qs.get("user", [""])[0]

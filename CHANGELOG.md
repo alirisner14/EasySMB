@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-09-24
+### Added
+- **Update the server from the dashboard.** A new Update tab checks GitHub, shows what
+  has changed, and installs it - no trip to the machine the NAS is plugged into.
+  Because Windows will not let a running program replace itself, the update runs as a
+  separate process that outlives the app: it stops the dashboard, takes the new code,
+  rebuilds if you run the compiled version, starts it again, and waits for it to answer.
+  **If the new version does not come back within 90 seconds, the previous one is put
+  back and started instead**, so a bad update cannot leave the server unreachable.
+  Everything it does is written to `update_log.txt`, shown on the same tab.
+- A `/healthz` endpoint, answered only for requests from the server itself, so the
+  updater can tell whether the new build really came up.
+
+### Security
+- `easynas_config.json` is now in `.gitignore`. It holds the dashboard password and
+  should never have been committable. It was never actually committed.
+
 ## [2.3.3] - 2026-09-24
 ### Changed
 - **One share you open is now the default, instead of one share per folder.**
@@ -284,6 +301,7 @@ and every action reports itself step by step.
 - SnapRAID integration with automated Task Scheduler routines.
 - Custom error interception and plain-English troubleshooting UI.
 
+[2.4.0]: https://github.com/alirisner14/EasySMB/compare/v2.3.3...v2.4.0
 [2.3.3]: https://github.com/alirisner14/EasySMB/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/alirisner14/EasySMB/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/alirisner14/EasySMB/compare/v2.3.0...v2.3.1

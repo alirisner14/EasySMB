@@ -220,3 +220,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# EasySMB runtime files. The config holds the dashboard password, so it must
+# never be committed. The update log is per-machine.
+easynas_config.json
+update_log.txt
+*.exe.bak
