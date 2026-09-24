@@ -101,6 +101,102 @@ def walk_folders(root, depth=2):
     return out
 
 
+
+def ps_json(script):
+    """Run PowerShell and parse its JSON output. Returns (list, error)."""
+    res = subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         script + " | ConvertTo-Json -Depth 3 -Compress"],
+        capture_output=True, text=True)
+    out = (res.stdout or "").strip()
+    if res.returncode != 0 and not out:
+        return [], (res.stderr or "").strip()[:300]
+    if not out:
+        return [], ""
+    try:
+        data = json.loads(out)
+    except Exception as exc:
+        return [], "Could not read PowerShell output: %s" % exc
+    if isinstance(data, dict):
+        data = [data]
+    return data, ""
+
+
+def check_shares(roots, repair):
+    """Report - and optionally fix - the share-level side of access.
+
+    NTFS permissions decide who can read what. The share is the front door:
+    if it is missing, or nobody is granted access on it, Windows answers
+    'Windows cannot access \\\\server\\Name' before NTFS is ever consulted.
+    """
+    print("")
+    print("SHARES (the front door - separate from folder permissions)")
+    print("-" * 78)
+    shares, err = ps_json("Get-SmbShare | Where-Object { -not $_.Special } | "
+                          "Select-Object Name,Path,FolderEnumerationMode")
+    if err:
+        print("  Could not read the share list: %s" % err)
+        return 1
+    mine = []
+    for sh in shares:
+        path = os.path.normpath(sh.get("Path") or "")
+        for r in roots:
+            rl, pl = r.lower(), path.lower()
+            if pl == rl or pl.startswith(rl + os.sep):
+                mine.append((sh.get("Name") or "", path))
+                break
+    if not mine:
+        print("  No shares point at your NAS folders at all.")
+        print("  Nothing here can be reached over the network until they are published.")
+        print("  Open EasySMB and press 'Update The Folder List'.")
+        return 1
+
+    problems = []
+    for name, path in mine:
+        acc, aerr = ps_json("Get-SmbShareAccess -Name '%s' | "
+                            "Select-Object AccountName,AccessRight,AccessControlType"
+                            % name.replace("'", "''"))
+        allowed = [a for a in acc
+                   if str(a.get("AccessControlType")) in ("0", "Allow")]
+        who = ", ".join("%s=%s" % (a.get("AccountName"), a.get("AccessRight"))
+                        for a in allowed) or "NOBODY"
+        if aerr:
+            who = "could not read (%s)" % aerr
+        print("  %-22s %-34s %s" % (name[:22], path[-34:], who))
+        if not allowed:
+            problems.append(name)
+
+    if not problems:
+        print("")
+        print("  Every share lets somebody in, so the front door is not the problem.")
+        return 0
+
+    print("")
+    print("  %d share(s) let nobody in at all." % len(problems))
+    if not repair:
+        print("  Run again with --repair to grant access on them.")
+        return 1
+
+    print("")
+    print("  REPAIRING shares")
+    bad = 0
+    for name in problems:
+        q = name.replace("'", "''")
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Grant-SmbShareAccess -Name '%s' -AccountName 'Authenticated Users' "
+             "-AccessRight Change -Force" % q],
+            capture_output=True, text=True)
+        if res.returncode != 0:
+            bad += 1
+            print("    FAILED %s: %s" % (name, (res.stdout + res.stderr).strip()[:200]))
+        else:
+            print("    granted Authenticated Users on '%s'" % name)
+    print("")
+    print("  Folder permissions still decide who actually sees what inside.")
+    return 1 if bad else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="Repair folder access after a bad share publish.")
     ap.add_argument("--repair", action="store_true",
@@ -150,8 +246,13 @@ def main():
             seen.add(k)
             ordered.append(f)
 
-    print("\nBEFORE")
+    share_rc = check_shares(roots, args.repair)
+
+    print("\nFOLDER PERMISSIONS")
     print("-" * 78)
+    print("BEFORE")
+    print("(NOBODY means no rule naming that person directly. Access that comes")
+    print(" from a group they belong to is not counted here.)")
     locked = []
     for f in ordered:
         who = []
@@ -164,8 +265,10 @@ def main():
             locked.append(f)
 
     if not locked:
-        print("\nEveryone still has access somewhere on every folder. Nothing to repair.")
-        return 0
+        print("\nEveryone still has access somewhere on every folder.")
+        if share_rc:
+            print("The folders are fine - the problem is the shares listed above.")
+        return share_rc
 
     print("\n%d folder(s) nobody can open." % len(locked))
     if not args.repair:
@@ -207,6 +310,8 @@ def main():
         print("and set who can open each of these on the 'People & Folders' tab.")
         return 1
 
+    if share_rc:
+        print("Folders repaired, but see the share problems listed further up.")
     print("Every folder has somebody on it again.")
     print("Open a folder from a phone or laptop to confirm, then set the exact")
     print("per-person access you want on the 'People & Folders' tab.")
