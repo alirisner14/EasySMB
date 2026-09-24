@@ -19,7 +19,7 @@ import http.server
 from tkinter import filedialog, messagebox, ttk
 
 
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.3.2"
 NO_FOLDER_CHOSEN = "(scan your folders first)"
 
 # =========================================================================

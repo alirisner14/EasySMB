@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.2] - 2026-09-24
+### Fixed
+- **A folder could silently never appear on the network.** Windows publishes its own
+  share called `Users` for `C:\Users`. When your NAS had a top-level folder of the same
+  name, EasySMB refused to touch the existing share - correctly, since it belongs to
+  Windows - but then skipped your folder entirely. The result was a share list where
+  tapping `Users` showed the server's own Windows profiles instead of your family's
+  folders, and your real folder was unreachable from anywhere. It now publishes under
+  a free name (`NASUsers`) and tells you where the folder landed, instead of giving up.
+  Nothing belonging to Windows is deleted.
+
+### Changed
+- `tools/repair_access.py` now checks the shares as well as the folder permissions,
+  works without the settings file by asking Windows which folders are shared, and
+  prints share rights in words rather than numbers.
+
 ## [2.3.1] - 2026-09-24
 ### Fixed
 - **Publishing shares locked people out of their own folders.** Every top-level folder
@@ -258,6 +274,7 @@ and every action reports itself step by step.
 - SnapRAID integration with automated Task Scheduler routines.
 - Custom error interception and plain-English troubleshooting UI.
 
+[2.3.2]: https://github.com/alirisner14/EasySMB/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/alirisner14/EasySMB/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/alirisner14/EasySMB/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/alirisner14/EasySMB/compare/v2.1.0...v2.2.0
