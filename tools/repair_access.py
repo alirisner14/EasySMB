@@ -63,11 +63,41 @@ def is_admin():
 
 
 def find_config():
-    for base in (os.path.dirname(HERE), HERE, os.getcwd()):
+    """The config lives next to the EasySMB program, wherever that was put."""
+    bases = [os.path.dirname(HERE), HERE, os.getcwd(),
+             os.path.join(os.path.dirname(HERE), "dist")]
+    for base in bases:
         p = os.path.join(base, "easynas_config.json")
         if os.path.exists(p):
             return p
+    # Not in the usual places - go looking, shallowly, on every fixed drive.
+    for drive in "CDEFGH":
+        root = drive + ":" + os.sep
+        if not os.path.isdir(root):
+            continue
+        for base, dirs, files in os.walk(root):
+            depth = base.rstrip(os.sep).count(os.sep)
+            if depth >= 3:
+                dirs[:] = []
+                continue
+            dirs[:] = [d for d in dirs if not d.startswith((".", "$"))
+                       and d.lower() not in ("windows", "program files",
+                                             "program files (x86)", "programdata")]
+            if "easynas_config.json" in files:
+                return os.path.join(base, "easynas_config.json")
     return ""
+
+
+def nas_shares():
+    """Every non-system share on this PC, as (name, path)."""
+    rows, err = ps_json("Get-SmbShare | Where-Object { -not $_.Special } | "
+                        "Select-Object Name,Path")
+    out = []
+    for r in rows:
+        p = (r.get("Path") or "").strip()
+        if p and os.path.isdir(p):
+            out.append((r.get("Name") or "", os.path.normpath(p)))
+    return out, err
 
 
 def local_users():
@@ -100,6 +130,11 @@ def walk_folders(root, depth=2):
     walk(root, 1)
     return out
 
+
+
+# PowerShell reports share rights as numbers. Say what they mean.
+RIGHTS = {"0": "Full", "1": "Change", "2": "Read", "3": "Custom",
+          "Full": "Full", "Change": "Change", "Read": "Read", "Custom": "Custom"}
 
 
 def ps_json(script):
@@ -158,7 +193,9 @@ def check_shares(roots, repair):
                             % name.replace("'", "''"))
         allowed = [a for a in acc
                    if str(a.get("AccessControlType")) in ("0", "Allow")]
-        who = ", ".join("%s=%s" % (a.get("AccountName"), a.get("AccessRight"))
+        who = ", ".join("%s=%s" % (a.get("AccountName"),
+                                   RIGHTS.get(str(a.get("AccessRight")),
+                                              a.get("AccessRight")))
                         for a in allowed) or "NOBODY"
         if aerr:
             who = "could not read (%s)" % aerr
@@ -210,21 +247,41 @@ def main():
     roots = [os.path.normpath(r) for r in args.root]
     if not roots:
         cfg_path = find_config()
-        if not cfg_path:
-            print("Could not find easynas_config.json. Pass --root yourself, e.g.")
-            print(r"    python tools\repair_access.py --root D:\FamilyNAS --repair")
-            return 2
-        cfg = json.loads(io.open(cfg_path, encoding="utf-8").read())
-        print("Using %s" % cfg_path)
-        if cfg.get("root_dir"):
-            roots.append(os.path.normpath(cfg["root_dir"]))
-        for e in (cfg.get("extra_locations") or []):
-            if isinstance(e, dict) and e.get("path"):
-                roots.append(os.path.normpath(e["path"]))
-        if cfg.get("archive_dir"):
-            roots.append(os.path.normpath(cfg["archive_dir"]))
+        if cfg_path:
+            cfg = json.loads(io.open(cfg_path, encoding="utf-8").read())
+            print("Using %s" % cfg_path)
+            if cfg.get("root_dir"):
+                roots.append(os.path.normpath(cfg["root_dir"]))
+            for e in (cfg.get("extra_locations") or []):
+                if isinstance(e, dict) and e.get("path"):
+                    roots.append(os.path.normpath(e["path"]))
+            if cfg.get("archive_dir"):
+                roots.append(os.path.normpath(cfg["archive_dir"]))
+        else:
+            # No settings file - ask Windows instead. The shares point straight
+            # at the folders we care about, which is all this needs.
+            found, err = nas_shares()
+            if err:
+                print("No easynas_config.json, and the share list could not be read:")
+                print("   %s" % err)
+            if found:
+                print("No easynas_config.json found, so using the shared folders "
+                      "Windows already knows about:")
+                for name, path in found:
+                    print("   %-20s %s" % (name, path))
+                roots.extend(path for _, path in found)
+            else:
+                print("Could not find easynas_config.json, and this PC is not sharing")
+                print("any folders. Point it at your NAS folder yourself:")
+                print("    python tools\\repair_access.py --root D:\\FamilyNAS")
+                return 2
 
-    roots = [r for r in roots if os.path.isdir(r)]
+    seen_r, uniq = set(), []
+    for r in roots:
+        if os.path.isdir(r) and r.lower() not in seen_r:
+            seen_r.add(r.lower())
+            uniq.append(r)
+    roots = uniq
     if not roots:
         print("None of those folders exist.")
         return 2
