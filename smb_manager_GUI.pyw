@@ -19,7 +19,7 @@ import http.server
 from tkinter import filedialog, messagebox, ttk
 
 
-APP_VERSION = "2.3.2"
+APP_VERSION = "2.3.3"
 NO_FOLDER_CHOSEN = "(scan your folders first)"
 
 # =========================================================================
@@ -126,7 +126,11 @@ CONFIG_DEFAULTS = {
     "hidden_users": [],
     # "folders" = publish each top-level folder, so tapping the server goes
     # straight to Users / Family_Shared / Resources with no wrapper folder.
-    "share_mode": "folders",
+    # One share you open, rather than one share per folder. The flat layout
+    # saves a tap on a phone but costs you everywhere else: nothing single
+    # to pin or map, saved shortcuts break whenever the folder list changes,
+    # and a top folder named like one of Windows' own shares collides.
+    "share_mode": "master",
     # Folder on a second drive that finished folders get moved to. Kept
     # out of the share list on purpose - it is an administrator holding
     # area, not something the family browses.
@@ -739,7 +743,7 @@ def list_server_drives():
 
 def publish_share_layout(log, root_dir, mode=None):
     """Publish the share layout. Returns False if something failed."""
-    mode = mode or load_config().get("share_mode", SHARE_MODE_FOLDERS)
+    mode = mode or load_config().get("share_mode", SHARE_MODE_MASTER)
 
     step = log.begin("Read the current share list")
     shares, err = list_smb_shares()
@@ -3018,18 +3022,17 @@ class GlassSMBManagerApp:
 
         share_rim, share_card = self.create_glass_card(self.view_step2, title="Step 5: What People See When They Tap Your Server")
         share_rim.pack(fill="x", pady=4)
-        self.var_share_mode = tk.StringVar(value=load_config().get("share_mode", SHARE_MODE_FOLDERS))
+        self.var_share_mode = tk.StringVar(value=load_config().get("share_mode", SHARE_MODE_MASTER))
         sbox = tk.Frame(share_card, bg=self.palette["glass_card"])
         sbox.pack(fill="x", pady=2)
-        ttk.Radiobutton(sbox, text="Show my top folders directly  (\\\\server \u2192 Users, Family_Shared, Resources)",
+        ttk.Radiobutton(sbox, text="Top folders directly  (\\\\server \u2192 Users, Family_Shared, Resources)   - saves a tap on phones",
                         variable=self.var_share_mode, value=SHARE_MODE_FOLDERS,
                         command=self.save_share_mode, style="Glass.TRadiobutton").pack(anchor="w", pady=2)
-        ttk.Radiobutton(sbox, text="Show one folder to open first  (\\\\server \u2192 FamilyNAS \u2192 Users, ...)",
+        ttk.Radiobutton(sbox, text="One folder to open first  (\\\\server \u2192 FamilyNAS \u2192 Users, ...)   - recommended",
                         variable=self.var_share_mode, value=SHARE_MODE_MASTER,
                         command=self.save_share_mode, style="Glass.TRadiobutton").pack(anchor="w", pady=2)
         tk.Label(share_card,
-                 text=("Phones show the SHARE list, not the folder tree. Sharing the parent folder adds an extra\n"
-                       "tap for everyone, and an old share left behind makes the same folder appear twice."),
+                 text=("Phones show the SHARE list, not the folder tree.\n\nOne folder to open first: everything lives under \\\\server\\FamilyNAS, so there is a single\nplace to pin, map a drive to, or bookmark, and those shortcuts keep working when you add\nor rename folders. Costs one extra tap on a phone.\n\nTop folders directly: saves that tap, but there is no single thing to pin, every saved\nshortcut breaks when the folder list changes, and a top folder sharing a name with one of\nWindows\u2019 own shares (Users, for example) has to be published under a different name."),
                  bg=self.palette["glass_card"], fg=self.palette["text_muted"], font=("Segoe UI", 8),
                  justify="left").pack(anchor="w", pady=(4, 6))
         srow = tk.Frame(share_card, bg=self.palette["glass_card"])
