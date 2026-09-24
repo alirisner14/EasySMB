@@ -796,15 +796,23 @@ def publish_share_layout(log, root_dir, mode=None):
         current = existing.get(name.lower())
         if current and _norm(current["path"]) != _norm(path):
             if not is_under_root(current["path"], root_dir):
-                # Someone else's share happens to have the same name. Deleting
-                # it would break something this app knows nothing about.
-                log.fail(log.begin("Publish share '%s'" % name),
-                         "This PC already has a share called '%s' pointing at %s, which is "
-                         "outside your NAS folder.\nEasySMB will not remove a share it did not "
-                         "create. Either rename the folder %s, or delete that share yourself in "
-                         "Windows, then run this again." % (name, current["path"], path))
-                all_ok = False
-                continue
+                # Someone else's share already owns this name - Windows itself
+                # publishes 'Users' for C:\Users, for instance. Deleting it
+                # would break something this app knows nothing about, but
+                # giving up means the folder never appears on the network at
+                # all. Publish it under a name that is free instead.
+                wanted, taken_by = name, current["path"]
+                alt = "NAS" + name
+                n = 2
+                while alt.lower() in existing and _norm(existing[alt.lower()]["path"]) != _norm(path):
+                    alt = "NAS%s%d" % (name, n)
+                    n += 1
+                name = alt
+                current = existing.get(name.lower())
+                log.note("Windows already shares the name '%s' (it points at %s, "
+                         "outside your NAS). Your folder will be published as '%s' "
+                         "instead, so reach it at \\\\<server>\\%s."
+                         % (wanted, taken_by, name, name))
             log.run("Remove the old '%s' share pointing at the wrong folder" % name,
                     ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
                      "Remove-SmbShare -Name %s -Force" % _ps_quote(name)], shell=False,
