@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-09-24
+### Fixed
+- **Publishing shares locked people out of their own folders.** Every top-level folder
+  was locked down with `icacls /inheritance:r`, which DELETES inherited permissions.
+  Anyone whose access came from the parent folder rather than from an explicit rule on
+  the folder itself lost it - and because shares use access-based enumeration, those
+  folders then disappear completely from phones and laptops. The usual symptom is
+  seeing one or two folders and nothing else, or a share that opens empty.
+  It now uses `/inheritance:d`, which copies the inherited permissions onto the folder
+  before detaching it, so nothing is lost. Reproduced, fixed, and re-tested.
+
+### Added
+- `tools/repair_access.py` - run it on the server to undo the damage. It lists every
+  managed folder and who can open it; `--repair` re-enables inheritance so access flows
+  back down from the parent. Dry run by default, and it never deletes anything.
+- **The permissions page is now a grid of dropdowns with one Save button.** Every
+  folder against every person, change as many as you like, press Save once. Each change
+  is still written and read back individually with a per-change pass/fail report, and
+  there is an Undo My Edits button plus a running count of unsaved changes.
+
 ## [2.3.0] - 2026-09-17
 ### Added
 - **Drives tab on the web dashboard.** Every fixed drive on the server is listed with
@@ -238,6 +258,7 @@ and every action reports itself step by step.
 - SnapRAID integration with automated Task Scheduler routines.
 - Custom error interception and plain-English troubleshooting UI.
 
+[2.3.1]: https://github.com/alirisner14/EasySMB/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/alirisner14/EasySMB/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/alirisner14/EasySMB/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/alirisner14/EasySMB/compare/v2.0.1...v2.1.0

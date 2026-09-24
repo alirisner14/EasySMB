@@ -19,7 +19,7 @@ import http.server
 from tkinter import filedialog, messagebox, ttk
 
 
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.1"
 NO_FOLDER_CHOSEN = "(scan your folders first)"
 
 # =========================================================================
@@ -785,7 +785,7 @@ def publish_share_layout(log, root_dir, mode=None):
 
     for _name, path in planned:
         log.run("Lock down %s" % os.path.basename(path),
-                'icacls "%s" /inheritance:r /grant:r "Administrators":(OI)(CI)F' % path,
+                'icacls "%s" /inheritance:d /grant "Administrators":(OI)(CI)F' % path,
                 detail="Stops this folder inheriting access from its parent, so your "
                        "per-user rules are the only thing that applies.")
 
@@ -1318,7 +1318,7 @@ def perform_archive(log, source, archive_dir, root_dir, status_cb=None):
                   "network like any other folder.")
     else:
         step = log.begin("Lock the archived copy to administrators")
-        ok, out = run_console('icacls "%s" /inheritance:r /grant:r "Administrators":(OI)(CI)F'
+        ok, out = run_console('icacls "%s" /inheritance:d /grant "Administrators":(OI)(CI)F'
                               % dest)
         detail = "Only administrators can open it. It is not shared on the network."
 
@@ -1482,6 +1482,65 @@ def start_archive_job(source, archive_dir, root_dir):
 def _archive_note(message):
     with ARCHIVE_JOB_LOCK:
         ARCHIVE_JOB["note"] = message
+
+
+def start_permission_job(changes):
+    """Apply a batch of permission changes in the background.
+
+    changes: [{"user":..., "folder":..., "level":...}]
+    Each one is written and then read back, the same as the desktop app.
+    """
+    with ARCHIVE_JOB_LOCK:
+        if ARCHIVE_JOB["running"]:
+            return False, "Another job is already running. Wait for it to finish."
+        ARCHIVE_JOB.update({
+            "running": True,
+            "title": "Saving %d permission change%s" % (len(changes), "" if len(changes) == 1 else "s"),
+            "steps": [], "report": "", "note": "", "ok": None,
+            "started": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+
+    def on_step(log, _step):
+        with ARCHIVE_JOB_LOCK:
+            ARCHIVE_JOB["steps"] = [dict(st) for st in log.steps]
+
+    def work():
+        log = ActionLog(ARCHIVE_JOB["title"], notify=on_step)
+        ok_all = True
+        try:
+            for item in changes:
+                user, folder = item.get("user", ""), item.get("folder", "")
+                want = item.get("level", "")
+                label = "%s  ->  %s" % (user, os.path.basename(folder) or folder)
+                step = log.begin(label)
+                if want not in PERM_ICACLS and want != "REMOVE":
+                    log.fail(step, "'%s' is not a permission level this app knows." % want)
+                    ok_all = False
+                    continue
+                before = get_user_permission(folder, user)
+                ok, after, cmdlog = apply_user_permission(folder, user, want)
+                change = "%s  ->  %s" % (PERM_LABELS.get(before.get("level"), "?"),
+                                         PERM_LABELS.get(want, want))
+                if ok and before.get("level") == want:
+                    log.skip(step, "%s\nAlready correct - re-applied and confirmed." % change)
+                elif ok:
+                    log.ok(step, "%s\nConfirmed by reading the folder back." % change)
+                else:
+                    log.fail(step, "%s\nThe folder still reports %s."
+                             % (change, describe_permission(after)), cmdlog)
+                    ok_all = False
+        except Exception:
+            ok_all = False
+            log.fail(log.begin("Unexpected error"), "The job stopped early.", traceback.format_exc())
+        log.finished = datetime.datetime.now()
+        with ARCHIVE_JOB_LOCK:
+            ARCHIVE_JOB["running"] = False
+            ARCHIVE_JOB["ok"] = bool(ok_all)
+            ARCHIVE_JOB["steps"] = [dict(st) for st in log.steps]
+            ARCHIVE_JOB["report"] = log.report()
+
+    threading.Thread(target=work, daemon=True).start()
+    return True, ""
 
 
 def start_share_job(root_dir, mode=None):
@@ -1799,6 +1858,11 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
           .current-perm.bad {{ border-left-color: var(--danger); }}
           pre.report {{ background: var(--well-bg); border: 1px solid var(--glass-border); border-left: 3px solid var(--success); border-radius: 6px; padding: 14px; overflow-x: auto; font-family: Consolas, ui-monospace, monospace; font-size: 12px; line-height: 1.5; white-space: pre; margin: 0 0 12px; }}
           pre.report.bad {{ border-left-color: var(--danger); }}
+          table.matrix td {{ vertical-align: top; }}
+          select.perm-cell {{ width: auto; min-width: 150px; padding: 7px 8px; font-size: 12px; }}
+          select.perm-cell.changed {{ border-color: var(--accent); background: rgba(77,121,255,.12); font-weight: 700; }}
+          .cell-note {{ font-size: 10px; color: var(--text-muted); margin-top: 3px; }}
+          .cell-note.bad {{ color: var(--danger); font-weight: 700; }}
         </style>
         <script>
           function openTab(tabName) {{
@@ -1823,15 +1887,110 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             return parts.length ? parts[parts.length - 1] : p;
           }}
 
+          const PERM_CHOICES = [
+            ["REMOVE", "No Access"],
+            ["RX", "Read Only"],
+            ["C", "Read + Add"],
+            ["M", "Read/Write/Delete"],
+            ["F", "Full Control"]
+          ];
+          let MATRIX_BASE = {{}};
+          let MATRIX_PENDING = {{}};
+
+          function cellKey(folder, user) {{ return folder + "\\u0000" + user; }}
+
+          function permChanged(sel) {{
+            const key = cellKey(sel.dataset.folder, sel.dataset.user);
+            const base = MATRIX_BASE[key];
+            if (sel.value === base) {{
+              delete MATRIX_PENDING[key];
+              sel.classList.remove('changed');
+            }} else {{
+              MATRIX_PENDING[key] = {{
+                user: sel.dataset.user, folder: sel.dataset.folder, level: sel.value
+              }};
+              sel.classList.add('changed');
+            }}
+            updatePermSummary();
+          }}
+
+          function updatePermSummary() {{
+            const n = Object.keys(MATRIX_PENDING).length;
+            const bar = document.getElementById('perm-summary');
+            const btn = document.getElementById('perm-save-btn');
+            const undo = document.getElementById('perm-undo-btn');
+            if (!bar) return;
+            if (n === 0) {{
+              bar.textContent = 'No unsaved changes \\u2014 this matches the server.';
+              bar.className = 'current-perm';
+            }} else {{
+              bar.textContent = '\\u25cf ' + n + ' unsaved change' + (n === 1 ? '' : 's')
+                              + ' \\u2014 nothing is written until you press Save.';
+              bar.className = 'current-perm bad';
+            }}
+            if (btn) {{ btn.disabled = (n === 0); btn.textContent = n === 0
+              ? 'Save Changes' : 'Save ' + n + ' Change' + (n === 1 ? '' : 's'); }}
+            if (undo) undo.disabled = (n === 0);
+          }}
+
+          function undoPermEdits() {{
+            document.querySelectorAll('select.perm-cell').forEach(sel => {{
+              sel.value = MATRIX_BASE[cellKey(sel.dataset.folder, sel.dataset.user)];
+              sel.classList.remove('changed');
+            }});
+            MATRIX_PENDING = {{}};
+            updatePermSummary();
+          }}
+
+          function savePermChanges() {{
+            const changes = Object.values(MATRIX_PENDING);
+            if (!changes.length) return;
+            if (!confirm('Save ' + changes.length + ' permission change'
+                + (changes.length === 1 ? '' : 's') + '?\\n\\n'
+                + 'Each one is written and then read back from the folder to confirm it.')) return;
+            const body = new URLSearchParams();
+            body.append('changes', JSON.stringify(changes));
+            fetch('/save_perms', {{method: 'POST', body: body}})
+              .then(r => r.text())
+              .then(() => {{ MATRIX_PENDING = {{}}; pollPermJob(); }})
+              .catch(e => alert('Could not reach the server.'));
+          }}
+
+          function pollPermJob() {{
+            fetch('/api/archive_status')
+              .then(r => r.json())
+              .then(j => {{
+                const prog = document.getElementById('perm-progress');
+                if (prog && j.steps && j.steps.length) {{
+                  let lines = [j.title + '   (started ' + j.started + ')', ''];
+                  j.steps.forEach(st => {{
+                    lines.push('[' + (STEP_MARK[st.status] || st.status) + ']  ' + st.label);
+                    if (st.detail) st.detail.split("\\n").forEach(l => lines.push('        ' + l));
+                  }});
+                  if (!j.running && j.ok !== null) {{
+                    lines.push('', j.ok ? 'All changes confirmed.' : 'Some changes failed - see above.');
+                  }}
+                  prog.textContent = lines.join("\\n");
+                  prog.className = (!j.running && j.ok === false) ? 'report bad' : 'report';
+                }}
+                const btn = document.getElementById('perm-save-btn');
+                if (btn) btn.disabled = !!j.running;
+                if (j.running) setTimeout(pollPermJob, 1500);
+                else loadMatrix();
+              }})
+              .catch(e => setTimeout(pollPermJob, 3000));
+          }}
+
           function loadMatrix() {{
             const wrap = document.getElementById('matrix-wrap');
             if (!wrap) return;
-            wrap.innerHTML = '<p class="muted">Reading permissions from the server…</p>';
             fetch('/api/matrix')
               .then(r => r.json())
               .then(d => {{
                 if (!d.users.length) {{ wrap.innerHTML = '<p class="muted">No user accounts found.</p>'; return; }}
-                if (!d.folders.length) {{ wrap.innerHTML = '<p class="muted">No folders found under the master share.</p>'; return; }}
+                if (!d.folders.length) {{ wrap.innerHTML = '<p class="muted">No folders found.</p>'; return; }}
+                MATRIX_BASE = {{}};
+                MATRIX_PENDING = {{}};
                 let h = '<table class="matrix"><thead><tr><th>Folder</th>';
                 d.users.forEach(u => h += '<th>' + u + '</th>');
                 h += '</tr></thead><tbody>';
@@ -1839,55 +1998,27 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                   h += '<tr><th title="' + f + '">' + shortName(f) + '</th>';
                   d.users.forEach(u => {{
                     const c = d.grid[f][u];
-                    const cls = c.deny ? 'DENY' : c.level;
-                    let label = LEVEL_TEXT[c.level] || c.level;
-                    if (c.deny) label = 'DENY';
-                    if (c.inherited && c.level !== 'REMOVE') label += ' <i>(inh)</i>';
-                    h += '<td><span class="pill lvl-' + cls + '" title="' + c.text + '">' + label + '</span></td>';
+                    const lvl = (c.level === 'OTHER' || c.level === 'ERROR') ? 'RX' : c.level;
+                    MATRIX_BASE[cellKey(f, u)] = lvl;
+                    let opts = '';
+                    PERM_CHOICES.forEach(pc => {{
+                      opts += '<option value="' + pc[0] + '"' + (pc[0] === lvl ? ' selected' : '')
+                            + '>' + pc[1] + '</option>';
+                    }});
+                    let note = '';
+                    if (c.deny) note = '<div class="cell-note bad">DENY rule</div>';
+                    else if (c.inherited && c.level !== 'REMOVE') note = '<div class="cell-note">inherited</div>';
+                    else if (c.level === 'ERROR') note = '<div class="cell-note bad">unreadable</div>';
+                    h += '<td><select class="perm-cell" data-folder="' + f.replace(/"/g, '&quot;')
+                       + '" data-user="' + u + '" onchange="permChanged(this)">' + opts + '</select>'
+                       + note + '</td>';
                   }});
                   h += '</tr>';
                 }});
-                h += '</tbody></table>';
-                wrap.innerHTML = h;
+                wrap.innerHTML = h + '</tbody></table>';
+                updatePermSummary();
               }})
-              .catch(e => {{ wrap.innerHTML = '<p class="muted">Could not read permissions: ' + e + '</p>'; }});
-          }}
-
-          function syncPermissions() {{
-            const user = document.querySelector('[name="user"]').value;
-            const folder = document.querySelector('[name="folder"]').value;
-            const levelSelect = document.querySelector('[name="level"]');
-            const applyBtn = document.getElementById('apply-perm-btn');
-            const cur = document.getElementById('current-perm');
-
-            if (!user || !folder) return;
-
-            cur.className = 'current-perm';
-            cur.textContent = 'Checking current access…';
-            applyBtn.textContent = "Checking Server…";
-            applyBtn.disabled = true;
-
-            fetch(`/api/check_perm?user=${{encodeURIComponent(user)}}&folder=${{encodeURIComponent(folder)}}`)
-                .then(res => res.json())
-                .then(data => {{
-                    levelSelect.value = data.level === 'OTHER' ? 'RX' : data.level;
-                    if (data.error) {{
-                      cur.className = 'current-perm bad';
-                      cur.textContent = 'Could not read this folder: ' + data.error;
-                    }} else {{
-                      cur.className = 'current-perm' + (data.deny ? ' bad' : '');
-                      cur.innerHTML = 'On the server now: <b>' + data.describe + '</b>'
-                        + (data.raw ? '<br><span class="muted mono">' + data.raw.replace(/</g, '&lt;') + '</span>' : '');
-                    }}
-                    applyBtn.textContent = "Apply Security Rule";
-                    applyBtn.disabled = false;
-                }})
-                .catch(err => {{
-                    cur.className = 'current-perm bad';
-                    cur.textContent = 'Could not reach the server.';
-                    applyBtn.textContent = "Apply Security Rule";
-                    applyBtn.disabled = false;
-                }});
+              .catch(e => {{ wrap.innerHTML = '<p class="muted">Could not read permissions.</p>'; }});
           }}
 
           function loadNetworkView() {{
@@ -2063,9 +2194,6 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
           }}
 
           document.addEventListener("DOMContentLoaded", () => {{
-            document.querySelector('[name="user"]').addEventListener('change', syncPermissions);
-            document.querySelector('[name="folder"]').addEventListener('change', syncPermissions);
-            syncPermissions();
             loadMatrix();
             loadNetworkView();
             loadArchive();
@@ -2126,70 +2254,32 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         <!-- TAB 2: PERMISSIONS -->
         <div id="perms" class="tab-content">
             <div class="card">
-                <h3>Who Can See What — Live</h3>
-                <p style="font-size: 13px; color: var(--text-muted); margin-top: -10px; margin-bottom: 15px;">
-                  Read straight off the server's folders. This is what Windows reports right now, not a saved copy.
-                  <button type="button" class="link-btn" onclick="loadMatrix()">↺ Refresh</button>
+                <h3>Who Can Open What</h3>
+                <p style="font-size: 13px; color: var(--text-muted); margin-top: -10px; margin-bottom: 12px;">
+                  Every folder against every person, read live off the server. Change as many as you
+                  like, then press Save once \u2014 nothing is written until you do.
+                  <button type="button" class="link-btn" onclick="loadMatrix()">\u21ba Re-read server</button>
                 </p>
-                <div id="matrix-wrap" class="matrix-wrap"><p class="muted">Loading current permissions…</p></div>
+                <div id="perm-summary" class="current-perm">Loading\u2026</div>
+                <div id="matrix-wrap" class="matrix-wrap"><p class="muted">Loading\u2026</p></div>
+                <div style="display:flex; gap:10px; margin-top:16px; flex-wrap:wrap;">
+                  <button type="button" id="perm-save-btn" class="action-btn" style="flex:1;"
+                          onclick="savePermChanges()" disabled>Save Changes</button>
+                  <button type="button" id="perm-undo-btn" class="action-btn"
+                          style="flex:0 0 auto; background:var(--glass-border);"
+                          onclick="undoPermEdits()" disabled>Undo My Edits</button>
+                </div>
                 <p class="legend">
                   <span class="pill lvl-F">Full Control</span>
-                  <span class="pill lvl-M">Read / Write / Delete</span>
+                  <span class="pill lvl-M">Read/Write/Delete</span>
                   <span class="pill lvl-C">Read + Add</span>
                   <span class="pill lvl-RX">Read Only</span>
                   <span class="pill lvl-REMOVE">No Access</span>
-                  <span class="pill lvl-DENY">DENY rule</span>
-                  <span class="muted">· <i>(inh)</i> = inherited from the parent folder</span>
                 </p>
             </div>
-
             <div class="card">
-                <h3>Change a Rule</h3>
-                <p style="font-size: 13px; color: var(--text-muted); margin-top: -10px; margin-bottom: 15px;">Pick a user and folder. The current setting loads automatically, and the change is verified on the server before it reports success.</p>
-                <form method="POST" action="/perms">
-                    <div class="form-group">
-                        <label>Select User:</label>
-                        <select name="user">{"".join(f'<option value="{u}">{u}</option>' for u in users)}</select>
-                    </div>
-                    <div class="form-group">
-                        <label>Select Folder:</label>
-                        <select name="folder">{"".join(f'<option value="{f}">{os.path.basename(f) or f}</option>' for f in folders)}</select>
-                    </div>
-                    <div id="current-perm" class="current-perm">Checking current access…</div>
-                    <div class="form-group">
-                        <label>Access Level:</label>
-                        <select name="level" id="level-select">
-                            <option value="RX">Read Only (View Files)</option>
-                            <option value="C">Read + Add Files (no deleting)</option>
-                            <option value="M">Modify (Read, Write, Delete)</option>
-                            <option value="F">Full Control</option>
-                            <option value="REMOVE">Revoke Access (Hide Folder via ABE)</option>
-                        </select>
-                    </div>
-                    <button type="submit" id="apply-perm-btn" class="action-btn" style="background:#6366f1;">Apply Security Rule</button>
-                </form>
-            </div>
-        </div>
-        
-        <!-- TAB 3: NETWORK SHARES -->
-        <div id="shares" class="tab-content">
-            <div class="card">
-                <h3>What People See When They Tap The Server</h3>
-                <p style="font-size: 13px; color: var(--text-muted); margin-top: -10px; margin-bottom: 15px;">
-                  Phones and PCs show the SHARE list, not your folder tree. If the same folder is
-                  published twice, or the parent folder is shared as well as its children, everything
-                  appears more than once.
-                  <button type="button" class="link-btn" onclick="loadNetworkView()">↺ Refresh</button>
-                </p>
-                <div id="share-list"><p class="muted">Loading…</p></div>
-            </div>
-            <div class="card">
-                <h3>Diagnosis</h3>
-                <pre id="share-report" class="report">Loading…</pre>
-                <p style="font-size: 12px; color: var(--text-muted);">
-                  Changing the share layout needs Administrator rights, so it is done from the
-                  desktop app: <b>Step 5 → Update The Folder List</b>.
-                </p>
+                <h3>Progress</h3>
+                <pre id="perm-progress" class="report">Nothing running.</pre>
             </div>
         </div>
 
@@ -2335,6 +2425,33 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                     output = "\n".join(lines)
                 except Exception as e:
                     output = "FAILED - %s" % e
+
+        elif parsed.path == "/save_perms":
+            title = "Permissions Log"
+            raw = post_qs.get("changes", ["[]"])[0]
+            try:
+                changes = json.loads(raw)
+            except Exception as e:
+                changes = None
+                output = "Could not read the list of changes: %s" % e
+            if changes is not None:
+                clean = []
+                for c in changes if isinstance(changes, list) else []:
+                    if not isinstance(c, dict):
+                        continue
+                    user = (c.get("user") or "").strip()
+                    folder = (c.get("folder") or "").strip()
+                    level = (c.get("level") or "").strip()
+                    if user and folder and level:
+                        clean.append({"user": user, "folder": folder, "level": level})
+                if not clean:
+                    output = "There were no changes to save."
+                else:
+                    started, why_not = start_permission_job(clean)
+                    output = (("Saving %d change%s now.\n\nEach one is written and then read "
+                               "back from the folder to confirm it. Watch the Security Rules tab "
+                               "for progress." % (len(clean), "" if len(clean) == 1 else "s"))
+                              if started else why_not)
 
         elif parsed.path == "/drives":
             title = "Drive Log"
