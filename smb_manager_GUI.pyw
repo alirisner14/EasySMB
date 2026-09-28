@@ -19,7 +19,7 @@ import http.server
 from tkinter import filedialog, messagebox, ttk
 
 
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.4.1"
 NO_FOLDER_CHOSEN = "(scan your folders first)"
 
 # =========================================================================
@@ -3641,13 +3641,42 @@ If a drive dies or you accidentally delete a file:
             else:
                 cmd = '"%s" --headless' % exe_path
 
-            if not log.run("Register the background task",
-                           ["schtasks", "/create", "/tn", task_name, "/tr", cmd,
-                            "/sc", "onlogon", "/rl", "highest", "/f"], shell=False,
-                           verify=lambda: (run_console(["schtasks", "/query", "/tn", task_name], shell=False)[0],
-                                           "Windows Task Scheduler confirms the job exists.")):
+            # At startup as SYSTEM, not at logon. A server that reboots - for a
+            # Windows update, say - would otherwise sit at the lock screen with
+            # the dashboard never starting, because nobody has signed in. The
+            # 30 second delay gives the network stack time to come up first.
+            create = ["schtasks", "/create", "/tn", task_name, "/tr", cmd,
+                      "/sc", "onstart", "/ru", "SYSTEM", "/rl", "highest",
+                      "/delay", "0000:30", "/f"]
+            step = log.begin("Register the background task")
+            ok, out = run_console(create, shell=False)
+            if not ok:
+                # Not every Windows edition accepts /delay, and a locked-down
+                # machine may refuse SYSTEM. Fall back rather than leave the
+                # user with no dashboard at all - but say so, because the
+                # fallback only starts once somebody signs in.
+                ok, out2 = run_console(
+                    ["schtasks", "/create", "/tn", task_name, "/tr", cmd,
+                     "/sc", "onstart", "/ru", "SYSTEM", "/rl", "highest", "/f"],
+                    shell=False)
+                out = out + "\n" + out2
+                if not ok:
+                    ok, out3 = run_console(
+                        ["schtasks", "/create", "/tn", task_name, "/tr", cmd,
+                         "/sc", "onlogon", "/rl", "highest", "/f"], shell=False)
+                    out = out + "\n" + out3
+                    if ok:
+                        log.note("Windows would not let the dashboard run at startup, "
+                                 "so it is registered to start when you sign in instead. "
+                                 "If this server reboots on its own, the dashboard will "
+                                 "not come back until somebody signs in to it.")
+            if not ok or not run_console(["schtasks", "/query", "/tn", task_name],
+                                         shell=False)[0]:
+                log.fail(step, "Windows would not register the background task.", out)
                 log.skip_rest("The dashboard is not running.")
                 return
+            log.ok(step, "Windows Task Scheduler confirms the job exists, and it "
+                         "starts with the server rather than waiting for a sign-in.")
 
             if not log.run("Start the dashboard", ["schtasks", "/run", "/tn", task_name], shell=False):
                 log.skip_rest("The task exists but did not start. Sign out and back in, or press Deploy again.")

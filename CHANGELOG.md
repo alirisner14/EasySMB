@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-09-28
+### Fixed
+- **The dashboard did not come back after the server rebooted.** Its background job
+  was registered to start "at logon", so a server that restarted on its own - for a
+  Windows update, say - sat at the sign-in screen with the dashboard never starting.
+  Nothing said so; the dashboard was simply gone, which looks identical to the server
+  being off. It now starts with the server, as SYSTEM, so no sign-in is needed.
+  Where Windows refuses that, it falls back to the old behaviour but says plainly
+  that the dashboard will not return on its own after a reboot.
+
 ## [2.4.0] - 2026-09-24
 ### Added
 - **Update the server from the dashboard.** A new Update tab checks GitHub, shows what
@@ -301,6 +311,7 @@ and every action reports itself step by step.
 - SnapRAID integration with automated Task Scheduler routines.
 - Custom error interception and plain-English troubleshooting UI.
 
+[2.4.1]: https://github.com/alirisner14/EasySMB/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/alirisner14/EasySMB/compare/v2.3.3...v2.4.0
 [2.3.3]: https://github.com/alirisner14/EasySMB/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/alirisner14/EasySMB/compare/v2.3.1...v2.3.2
