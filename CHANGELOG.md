@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2] - 2026-09-28
+### Fixed
+- **Installing an update now also fixes the old start-at-sign-in registration.**
+  Updating the program did not change an already-registered background job, so a
+  server updated remotely would still have failed to bring its dashboard back after
+  a reboot - the one thing 2.4.1 was meant to fix. The updater now re-registers it
+  to start with the server, keeping whatever command it was already running. If
+  Windows refuses, it says so rather than leaving you to find out after a restart.
+
 ## [2.4.1] - 2026-09-28
 ### Fixed
 - **The dashboard did not come back after the server rebooted.** Its background job
@@ -311,6 +320,7 @@ and every action reports itself step by step.
 - SnapRAID integration with automated Task Scheduler routines.
 - Custom error interception and plain-English troubleshooting UI.
 
+[2.4.2]: https://github.com/alirisner14/EasySMB/compare/v2.4.1...v2.4.2
 [2.4.1]: https://github.com/alirisner14/EasySMB/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/alirisner14/EasySMB/compare/v2.3.3...v2.4.0
 [2.3.3]: https://github.com/alirisner14/EasySMB/compare/v2.3.2...v2.3.3

@@ -100,6 +100,43 @@ def current_commit():
     return out.strip() if ok else ""
 
 
+def task_field(name):
+    """Read one field out of schtasks' verbose listing."""
+    ok, out = run(["schtasks", "/query", "/tn", TASK_NAME, "/fo", "list", "/v"])
+    if not ok:
+        return ""
+    for line in out.splitlines():
+        if line.lower().startswith(name.lower() + ":"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def ensure_starts_with_server():
+    """Re-register the task to start with the server rather than at sign-in.
+
+    Up to v2.4.0 it was registered /sc onlogon, so a server that rebooted on
+    its own sat at the sign-in screen with no dashboard. Updating the code
+    does not change an already-registered task, so the update fixes it here.
+    """
+    run_as = task_field("Run As User")
+    if run_as.upper() in ("SYSTEM", "NT AUTHORITY\\SYSTEM"):
+        return  # already registered the new way
+    cmd = task_field("Task To Run")
+    if not cmd:
+        log("Could not read the existing task, so leaving its schedule alone.")
+        return
+    log("Re-registering the dashboard to start with the server (was: sign-in only).")
+    for extra in (["/delay", "0000:30"], []):
+        ok, out = run(["schtasks", "/create", "/tn", TASK_NAME, "/tr", cmd,
+                       "/sc", "onstart", "/ru", "SYSTEM", "/rl", "highest"]
+                      + extra + ["/f"])
+        if ok:
+            log("Done - it will now come back on its own after a reboot.")
+            return
+    log("Windows would not allow it; the dashboard still starts only at sign-in. "
+        "It will not come back on its own after a reboot.")
+
+
 def running_from_exe():
     """Is the deployed dashboard a built .exe, or the .pyw source?"""
     ok, out = run(["schtasks", "/query", "/tn", TASK_NAME, "/fo", "list", "/v"])
@@ -203,6 +240,7 @@ def main():
         log("Built.")
 
     # ---- start it and make sure it answers -------------------------------
+    ensure_starts_with_server()
     log("Starting the new version...")
     if not start_dashboard():
         return roll_back("the dashboard task would not start.")
